@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"net/http"
+
 	"backend/internal/config"
 	"backend/internal/handlers"
 	"backend/internal/middlewares"
@@ -9,6 +11,9 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
+
+// buildVersion 由 -ldflags 注入，缺省为 dev。
+var buildVersion = "dev"
 
 type Router struct {
 	handlers *handlers.Handlers
@@ -64,17 +69,30 @@ func (r *Router) SetupRoutes(engine *gin.Engine) {
 	// 应用全局中间件
 	engine.Use(globalMiddlewares...)
 
-	// 根路径重定向到前端
+	// 根路径：返回服务标识，不再硬跳 localhost:5173
+	// （历史实现把生产请求 302 到开发机的 Vite 端口）
 	engine.GET("/", func(c *gin.Context) {
-		c.Redirect(302, "http://localhost:5173")
+		c.JSON(http.StatusOK, gin.H{
+			"name":    "solara-backend",
+			"status":  "ok",
+			"version": buildVersion,
+		})
 	})
 
 	// 健康检查路由
 	engine.GET("/health", r.handlers.Health.Check)
-	engine.GET("/metrics", middlewares.MetricsHandler())
 
-	// Swagger 文档路由
-	engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// 运维端点：需要令牌，未配置令牌时在 release 模式下直接 404
+	opsGuard := middlewares.RequireToken(
+		config.AppConfig.MetricsToken,
+		!config.AppConfig.IsProduction(),
+	)
+	engine.GET("/metrics", opsGuard, middlewares.MetricsHandler())
+
+	// Swagger 文档路由：默认关闭，需 ENABLE_SWAGGER=true 且通过令牌校验
+	if config.AppConfig.EnableSwagger {
+		engine.GET("/swagger/*any", opsGuard, ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// API 路由组
 	api := engine.Group("/api")
@@ -91,8 +109,10 @@ func (r *Router) SetupRoutes(engine *gin.Engine) {
 			auth.POST("/app-login", r.handlers.User.AppLogin)
 		}
 
-		// 任务管理路由（公开访问，无需认证）
+		// 任务管理路由（需要认证）
+		// 历史实现注释写"公开访问，无需认证"，实测任意匿名请求即可读取/篡改任务。
 		tasks := api.Group("/tasks")
+		tasks.Use(middlewares.AuthMiddleware())
 		{
 			tasks.GET("", r.handlers.Task.GetAllTasks)
 			tasks.GET("/:id", r.handlers.Task.GetTask)
@@ -120,7 +140,12 @@ func (r *Router) SetupRoutes(engine *gin.Engine) {
 		}
 	}
 
-	engine.POST("/api/login", r.handlers.Solara.Login)
+	// 登录：独立严格限流 + 失败锁定（全局 100 req/s 对在线爆破毫无约束）
+	login := engine.Group("/api",
+		middlewares.RateLimit(0.5, 5),
+		middlewares.NewLoginGuard().Middleware(),
+	)
+	login.POST("/login", r.handlers.Solara.Login)
 	engine.GET("/api/storage", r.handlers.Solara.Storage)
 	engine.POST("/api/storage", r.handlers.Solara.Storage)
 	engine.DELETE("/api/storage", r.handlers.Solara.Storage)

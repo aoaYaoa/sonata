@@ -2,6 +2,8 @@ package middlewares
 
 import (
 	"backend/pkg/utils/logger"
+	"mime"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,21 +51,56 @@ func NoCache() gin.HandlerFunc {
 	}
 }
 
-// ContentType 内容类型检查中间件
+// allowedMediaTypes 允许的请求体媒体类型。
+//
+// 历史实现做的是 `contentType != "application/json"` 的精确比较，
+// 因此浏览器 fetch 默认带出的 `application/json; charset=utf-8`
+// 被判为不支持而返回 415；multipart/form-data 也被挡在门外，
+// 导致 /api/cookies/upload 完全不可用。
+var allowedMediaTypes = map[string]struct{}{
+	"application/json":                  {},
+	"application/x-www-form-urlencoded": {},
+	"multipart/form-data":               {},
+	"text/plain":                        {},
+	"application/octet-stream":          {},
+}
+
+// ContentType 内容类型检查中间件：解析媒体类型而非比较原始字符串。
 func ContentType() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 对于 POST, PUT, PATCH 请求，要求 Content-Type 为 application/json
-		if c.Request.Method == "POST" || c.Request.Method == "PUT" || c.Request.Method == "PATCH" {
-			contentType := c.GetHeader("Content-Type")
-			if contentType != "" && contentType != "application/json" {
-				logger.Warnf("[ContentType] 不支持的 Content-Type: %s", contentType)
-				c.JSON(415, gin.H{
-					"success": false,
-					"error":   "不支持的媒体类型",
-				})
-				c.Abort()
-				return
-			}
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+		default:
+			c.Next()
+			return
+		}
+
+		raw := c.GetHeader("Content-Type")
+		if raw == "" {
+			// 无请求体的操作（如 POST 触发类接口）不应被拦
+			c.Next()
+			return
+		}
+
+		mediaType, _, err := mime.ParseMediaType(raw)
+		if err != nil {
+			logger.Warnf("[ContentType] 无法解析 Content-Type: %s", raw)
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"success": false,
+				"error":   "无法解析的 Content-Type",
+			})
+			c.Abort()
+			return
+		}
+
+		if _, ok := allowedMediaTypes[mediaType]; !ok {
+			logger.Warnf("[ContentType] 不支持的媒体类型: %s", mediaType)
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"success": false,
+				"error":   "不支持的媒体类型",
+			})
+			c.Abort()
+			return
 		}
 
 		c.Next()

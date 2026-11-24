@@ -2,6 +2,8 @@ package jwt
 
 import (
 	"backend/pkg/utils/logger"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,9 +31,28 @@ const (
 	minSecretLength = 32
 )
 
-var weakSecretPlaceholders = map[string]struct{}{
-	"your-secret-key-change-in-production": {},
-	"your-jwt-secret-key-change-me":        {},
+// weakSecretPatterns 弱密钥片段黑名单。
+//
+// 曾经这里是精确匹配的 map，导致 `your-jwt-secret-key-change-in-production`
+// 这类“变体占位串”因为拼写略有差异而逃过检查并被装载为有效签名密钥，
+// 最终可被用于伪造管理员令牌。改为子串匹配，覆盖所有“占位串变体”。
+var weakSecretPatterns = []string{
+	// 默认占位串的各种变体：`.env` 里写的是
+	// `your-jwt-secret-key-change-in-production`，与仓库默认值
+	// `your-secret-key-change-in-production` 只差三个字母，
+	// 精确匹配时代码检查通过、密钥仍被装载，可直接伪造 admin 令牌。
+	"change-in-production",
+	"change-me",
+	"changeme",
+	"change_me",
+	"your-secret",
+	"your-jwt",
+	"your-api-signing",
+	"placeholder",
+	"insecure",
+	"test-secret",
+	"dev-secret",
+	"default-secret",
 }
 
 var (
@@ -154,13 +175,23 @@ func ValidateSecret(secret string) error {
 	if secret == "" {
 		return errors.New("JWT_SECRET 不能为空")
 	}
-	if _, isWeakPlaceholder := weakSecretPlaceholders[secret]; isWeakPlaceholder {
-		return errors.New("JWT_SECRET 不能使用默认占位值")
+	lower := strings.ToLower(secret)
+	for _, pattern := range weakSecretPatterns {
+		if strings.Contains(lower, pattern) {
+			return fmt.Errorf("JWT_SECRET 含弱密钥片段 %q，请使用 `openssl rand -base64 48` 生成", pattern)
+		}
 	}
 	if len(secret) < minSecretLength {
 		return fmt.Errorf("JWT_SECRET 长度不能小于 %d", minSecretLength)
 	}
 	return nil
+}
+
+// SecretFingerprint 返回密钥指纹（前 8 位 sha256），
+// 用于启动日志核验“部署的密钥与预期一致”，不泄露密钥本身。
+func SecretFingerprint(secret string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(secret)))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 func resolveSecret(secret string) (string, error) {
