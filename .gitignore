@@ -48,6 +48,10 @@ frontend/android/app/release
 # Secrets
 .env
 *.env
+# 手写备份/临时副本（.env.bak.20261124、.env.local、.env.prod 之类）同样含凭据，
+# 但 .env.example 是要入库的模板，必须显式放行。
+.env.*
+!.env.example
 credentials.json
 backend/solara_backend_linux
 backend/main_linux
