@@ -2,8 +2,8 @@ package middlewares
 
 import (
 	"backend/internal/config"
-	"backend/pkg/utils/logger"
 	"backend/pkg/utils/crypto"
+	"backend/pkg/utils/logger"
 	"bytes"
 	"fmt"
 	"io"
@@ -31,11 +31,13 @@ const (
 // 签名规则：HMAC-SHA256(method + url + body + timestamp)
 //
 // 使用示例：
-//   router.Use(middlewares.SignatureMiddleware())
+//
+//	router.Use(middlewares.SignatureMiddleware())
 //
 // 请求头格式：
-//   X-Signature: <hmac-sha256-signature>
-//   X-Timestamp: <unix-timestamp>
+//
+//	X-Signature: <hmac-sha256-signature>
+//	X-Timestamp: <unix-timestamp>
 //
 // 注意事项：
 //   - 签名验证失败会返回 401 错误

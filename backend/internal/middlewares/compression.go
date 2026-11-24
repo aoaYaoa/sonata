@@ -38,7 +38,7 @@ func Compression() gin.HandlerFunc {
 type CompressLevel int
 
 const (
-	NoCompression      CompressLevel = iota
+	NoCompression CompressLevel = iota
 	BestSpeed
 	BestCompression
 	DefaultCompression

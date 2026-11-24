@@ -71,12 +71,13 @@ func InitIPAccessConfig(config *IPAccessConfig) {
 // - 单个IP段：192.168.1
 //
 // 使用示例：
-//   // 启用白名单
-//   InitIPAccessConfig(&IPAccessConfig{
-//       EnableWhitelist: true,
-//       Whitelist: []string{"192.168.1.1", "10.0.0.0/8"},
-//   })
-//   router.Use(IPAccessMiddleware())
+//
+//	// 启用白名单
+//	InitIPAccessConfig(&IPAccessConfig{
+//	    EnableWhitelist: true,
+//	    Whitelist: []string{"192.168.1.1", "10.0.0.0/8"},
+//	})
+//	router.Use(IPAccessMiddleware())
 func IPAccessMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		clientIP := getClientIP(c)

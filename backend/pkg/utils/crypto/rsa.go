@@ -189,4 +189,3 @@ func RSAGenerateKeyPairPEM(bits int) (privateKeyPEM, publicKeyPEM []byte, err er
 // cryptoHash 用于 RSA 签名的哈希算法
 // 使用SHA256作为哈希算法
 var cryptoHash crypto.Hash = crypto.SHA256
-
