@@ -10,6 +10,14 @@ Thumbs.db
 # Go backend
 backend/solara-backend
 backend/tmp/
+backend/server
+backend/seed_data
+backend/main
+backend/.gocache/
+backend/logs/
+backend/data/
+backend/*.db
+backend/*.db-journal
 
 # Flutter
 frontend/build/

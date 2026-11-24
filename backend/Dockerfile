@@ -1,46 +1,58 @@
-# 构建阶段
+# ── 构建阶段 ───────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS builder
 
-# 设置环境变量
 ENV GO111MODULE=on \
     CGO_ENABLED=0 \
     GOOS=linux \
     GOARCH=amd64 \
     GOPROXY="https://goproxy.cn,direct"
 
-# 创建工作目录
 WORKDIR /app
 
-# 复制依赖文件
+# 先只拷依赖清单，最大化利用构建缓存
 COPY go.mod go.sum ./
-
-# 下载依赖
 RUN go mod download
 
-# 复制源代码
 COPY . .
 
-# 编译应用
-RUN go build -o main cmd/server/main.go
+# -trimpath 去掉本机绝对路径；-ldflags 注入版本号便于线上核对
+ARG VERSION=dev
+RUN go build -trimpath \
+      -ldflags "-s -w -X backend/internal/routes.buildVersion=${VERSION}" \
+      -o main ./cmd/server
 
-# 运行阶段
-FROM alpine:latest
+# ── 运行阶段 ───────────────────────────────────────────────────────
+# 固定小版本，避免 alpine:latest 漂移带来的不可复现构建
+FROM alpine:3.20
 
-# 设置时区
-RUN apk --no-cache add ca-certificates tzdata && \
+# yt-dlp 用于 YouTube 源；node 是 yt-dlp 解签名所需 JS 运行时。
+# 历史镜像只装了 ca-certificates/tzdata，容器内 YouTube 搜索与取流必失败。
+RUN apk --no-cache add \
+      ca-certificates \
+      tzdata \
+      python3 \
+      py3-pip \
+      nodejs \
+      ffmpeg && \
+    pip install --no-cache-dir --break-system-packages yt-dlp && \
     cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
-WORKDIR /app
+# 以非 root 运行；cookie 与数据目录归该用户所有
+RUN addgroup -S solara && adduser -S -G solara -h /app solara
 
-# 从构建阶段复制二进制文件
+WORKDIR /app
 COPY --from=builder /app/main .
 
-# 复制配置文件 (如果有)
-# COPY --from=builder /app/.env .
+RUN mkdir -p /app/data /app/logs && chown -R solara:solara /app
+USER solara
 
-# 暴露端口
+ENV COOKIE_DIR=/app/data
+
 EXPOSE 8080
 
-# 启动命令
+# 健康检查：/health 在依赖降级时返回 503，用 200 判定进程可用性
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1
+
 CMD ["./main"]

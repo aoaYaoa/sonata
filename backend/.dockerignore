@@ -1,0 +1,24 @@
+# 构建产物与本地运行时数据
+bin/
+main
+main_linux
+server
+solara_backend_linux
+.gocache/
+logs/
+data/
+certs/
+*.db
+*.db-journal
+
+# 凭据与本地配置
+.env
+.env.*
+!.env.example
+credentials.json
+
+# 文档与测试产物
+docs/
+*.md
+coverage.out
+*.test
