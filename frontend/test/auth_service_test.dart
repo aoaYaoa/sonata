@@ -1,9 +1,17 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:solara_flutter/data/api/api_client.dart';
 import 'package:solara_flutter/services/auth_service.dart';
 
 void main() {
+  setUp(() {
+    // shared_preferences 在单元测试里没有平台实现，
+    // 不注入内存后端时 setString 会抛 MissingPluginException，
+    // 让登录判定为失败。
+    SharedPreferences.setMockInitialValues({});
+  });
+
   test('login returns false when credentials are invalid', () async {
     final dio = Dio(BaseOptions(baseUrl: 'https://example.com'));
     dio.interceptors.add(
@@ -38,14 +46,11 @@ void main() {
           handler.resolve(
             Response(
               requestOptions: options,
+              // 与后端 SolaraHandler.Login 的真实响应保持一致：
+              // {"success": true, "data": {"token": "..."}}
               data: {
-                'code': 200,
-                'message': '登录成功',
-                'data': {
-                  'access_token': 'test.jwt.token',
-                  'token_type': 'Bearer',
-                  'expires_in': 86400,
-                },
+                'success': true,
+                'data': {'token': 'test.jwt.token'},
               },
               statusCode: 200,
             ),

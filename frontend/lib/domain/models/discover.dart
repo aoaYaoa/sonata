@@ -1,4 +1,5 @@
-/// 发现页数据模型
+/// 发现页数据模型。
+library;
 
 // 排行榜榜单信息
 class LeaderboardItem {

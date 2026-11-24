@@ -2,9 +2,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/api/api_client.dart';
 import '../data/providers.dart';
+import 'debug_log_bus.dart';
 
 const _kTokenKey = 'jwt_token';
-const _kPasswordKey = 'user_password';
+
+/// 会话内的口令缓存。
+///
+/// 历史实现把明文口令写进 shared_preferences 的 `user_password` 键，
+/// 该文件在 Android 上是应用私有目录里的明文 XML、在桌面端是
+/// 用户主目录下的明文 JSON，root/越狱或备份导出即可直接读取。
+/// 现在口令只留在内存：应用存活期间 token 过期可静默续签，
+/// 进程重启后需要用户重新输入（fail-closed）。
+String? _sessionPassword;
 
 class AuthState {
   final bool isAuthed;
@@ -36,8 +45,8 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
         data: {'password': password},
       );
       final data = response.data;
-      print(
-        '[AuthService] login response: status=${response.statusCode} data=$data',
+      DebugLogBus.add(
+        '[AuthService] login status=${response.statusCode}',
       );
       if (data is! Map || data['success'] != true) {
         state = const AuthState(isAuthed: false);
@@ -49,30 +58,36 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
         return false;
       }
       client.setToken(token);
+      _sessionPassword = password;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kTokenKey, token);
-      await prefs.setString(_kPasswordKey, password);
       state = const AuthState(isAuthed: true);
       return true;
-    } catch (e, st) {
-      print('[AuthService] login error: $e\n$st');
+    } catch (e) {
+      DebugLogBus.add('[AuthService] login error: $e');
       state = const AuthState(isAuthed: false);
       return false;
     }
   }
 
   Future<bool> autoRelogin() async {
-    final prefs = await SharedPreferences.getInstance();
-    final password = prefs.getString(_kPasswordKey);
-    if (password == null || password.isEmpty) return false;
+    final password = _sessionPassword;
+    if (password == null || password.isEmpty) {
+      // 进程重启后没有内存中的口令，无法静默续签：
+      // 清掉失效 token 并让 UI 回到登录页。
+      state = const AuthState(isAuthed: false);
+      return false;
+    }
     return login('', password);
   }
 
   Future<void> logout() async {
     client.clearToken();
+    _sessionPassword = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kTokenKey);
-    await prefs.remove(_kPasswordKey);
+    // 兼容旧版本残留：升级后清掉历史明文口令
+    await prefs.remove('user_password');
     state = const AuthState(isAuthed: false);
   }
 }

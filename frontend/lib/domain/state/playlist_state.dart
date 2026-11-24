@@ -54,8 +54,11 @@ class PlaylistStateNotifier extends StateNotifier<PlaylistState> {
       playlists:
           state.playlists.map((p) {
             if (p.id != playlistId) return p;
-            if (p.songs.any((s) => s.id == song.id && s.source == song.source))
+            if (p.songs.any(
+              (s) => s.id == song.id && s.source == song.source,
+            )) {
               return p;
+            }
             return p.copyWith(
               songs: [...p.songs, song],
               updatedAt: DateTime.now(),

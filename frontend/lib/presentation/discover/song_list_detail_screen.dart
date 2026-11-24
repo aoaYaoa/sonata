@@ -8,6 +8,7 @@ import '../../domain/state/settings_state.dart';
 import '../../domain/state/queue_state.dart';
 import '../../domain/state/favorites_state.dart';
 import '../../services/player_controller.dart';
+import '../../services/debug_log_bus.dart';
 
 class SongListDetailScreen extends ConsumerStatefulWidget {
   final SongListItem item;
@@ -103,7 +104,9 @@ class _SongListDetailScreenState extends ConsumerState<SongListDetailScreen> {
           _hasMore = songs.length >= 30;
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      DebugLogBus.add('[Discover] 歌单详情 加载更多失败: $e');
+    }
     if (mounted) setState(() => _loadingMore = false);
   }
 

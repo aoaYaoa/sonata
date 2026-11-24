@@ -81,14 +81,14 @@ class _PlayerBarState extends ConsumerState<PlayerBar>
             decoration: BoxDecoration(
               color:
                   isDark
-                      ? Colors.black.withOpacity(0.6)
-                      : Colors.white.withOpacity(0.75),
+                      ? Colors.black.withValues(alpha: 0.6)
+                      : Colors.white.withValues(alpha: 0.75),
               border: Border(
                 top: BorderSide(
                   color:
                       isDark
-                          ? Colors.white.withOpacity(0.08)
-                          : Colors.black.withOpacity(0.06),
+                          ? Colors.white.withValues(alpha: 0.08)
+                          : Colors.black.withValues(alpha: 0.06),
                 ),
               ),
             ),
@@ -101,7 +101,7 @@ class _PlayerBarState extends ConsumerState<PlayerBar>
                   minHeight: 2,
                   backgroundColor: Colors.transparent,
                   valueColor: AlwaysStoppedAnimation<Color>(
-                    colorScheme.primary.withOpacity(0.8),
+                    colorScheme.primary.withValues(alpha: 0.8),
                   ),
                 ),
                 Padding(
@@ -136,8 +136,8 @@ class _PlayerBarState extends ConsumerState<PlayerBar>
                                 style: Theme.of(
                                   context,
                                 ).textTheme.bodySmall?.copyWith(
-                                  color: colorScheme.onSurface.withOpacity(
-                                    0.55,
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.55,
                                   ),
                                 ),
                               ),
@@ -248,7 +248,7 @@ class _PlayPauseButton extends StatelessWidget {
     return Material(
       color: enabled
           ? colorScheme.primary
-          : colorScheme.onSurface.withOpacity(0.1),
+          : colorScheme.onSurface.withValues(alpha: 0.1),
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
@@ -263,7 +263,7 @@ class _PlayPauseButton extends StatelessWidget {
               key: ValueKey(isPlaying),
               color: enabled
                   ? colorScheme.onPrimary
-                  : colorScheme.onSurface.withOpacity(0.3),
+                  : colorScheme.onSurface.withValues(alpha: 0.3),
               size: 22,
             ),
           ),

@@ -195,10 +195,15 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     for (final e in entries) {
       final d = DateTime(e.playedAt.year, e.playedAt.month, e.playedAt.day);
       final String label;
-      if (d == today) label = '今天';
-      else if (d == yesterday) label = '昨天';
-      else if (now.difference(d).inDays < 7) label = '${now.difference(d).inDays}天前';
-      else label = '${e.playedAt.month}月${e.playedAt.day}日';
+      if (d == today) {
+        label = '今天';
+      } else if (d == yesterday) {
+        label = '昨天';
+      } else if (now.difference(d).inDays < 7) {
+        label = '${now.difference(d).inDays}天前';
+      } else {
+        label = '${e.playedAt.month}月${e.playedAt.day}日';
+      }
       groups.putIfAbsent(label, () => []).add(e);
     }
     return groups.entries.map((e) => _DateGroup(label: e.key, entries: e.value)).toList();

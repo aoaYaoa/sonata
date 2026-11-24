@@ -5,16 +5,11 @@ class SolaraApi {
 
   SolaraApi({required this.client});
 
-  String _signature() {
-    final first = DateTime.now().microsecondsSinceEpoch.toString();
-    final second = DateTime.now().millisecondsSinceEpoch.toString();
-    return '$first$second';
-  }
-
+  // 说明：这里曾有一个 _signature() 往查询串塞 `s=<时间戳>`，但后端从未读取
+  // 该参数（真正的签名校验是 X-Signature/X-Timestamp 头 + HMAC-SHA256，
+  // 由 ENABLE_SIGNATURE 控制），属于纯误导，已删除。
   Uri _buildProxyUri(Map<String, String> params) {
-    final all = Map<String, String>.from(params);
-    all['s'] = _signature();
-    return Uri(path: '/proxy', queryParameters: all);
+    return Uri(path: '/proxy', queryParameters: params);
   }
 
   Uri buildSearchUri({

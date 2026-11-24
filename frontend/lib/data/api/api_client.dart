@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'web_adapter_stub.dart' if (dart.library.html) 'web_adapter_web.dart';
 
 class ApiClient {
@@ -50,7 +50,11 @@ class ApiClient {
                 opts.extra['_retry'] = true;
                 final retry = await this.dio.fetch(opts);
                 return handler.resolve(retry);
-              } catch (_) {}
+              } catch (e) {
+                // 重试仍失败：记录后把原始响应交回调用方，
+                // 由 repository 统一抛 AuthRequiredException。
+                debugPrint('[ApiClient] 重新登录后的重试失败: $e');
+              }
             }
           }
           handler.next(response);

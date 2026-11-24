@@ -6,6 +6,7 @@ import '../../domain/state/discover_state.dart';
 import '../../domain/state/settings_state.dart';
 import '../../domain/state/queue_state.dart';
 import '../../services/player_controller.dart';
+import '../../services/debug_log_bus.dart';
 
 class LeaderboardDetailScreen extends ConsumerStatefulWidget {
   final LeaderboardItem item;
@@ -102,7 +103,9 @@ class _LeaderboardDetailScreenState
           _hasMore = songs.length >= 30;
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      DebugLogBus.add('[Discover] 排行榜详情 加载更多失败: $e');
+    }
     if (mounted) setState(() => _loadingMore = false);
   }
 

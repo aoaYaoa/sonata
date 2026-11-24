@@ -4,6 +4,7 @@ import '../../domain/state/settings_state.dart';
 import '../../services/player_controller.dart';
 import '../../services/cookie_service.dart';
 import '../../data/providers.dart';
+import '../../services/debug_log_bus.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -502,7 +503,9 @@ class _SettingsTile extends StatelessWidget {
   final Color? valueColor;
   final Widget? trailing;
   final VoidCallback? onTap;
-  final bool enabled;
+  /// 所有调用点都使用启用态；保留字段是为了 onTap 的可空语义，
+  /// 因此不再暴露构造参数（避免 unused_element_parameter 警告）。
+  final bool enabled = true;
 
   const _SettingsTile({
     required this.icon,
@@ -512,7 +515,6 @@ class _SettingsTile extends StatelessWidget {
     this.valueColor,
     this.trailing,
     this.onTap,
-    this.enabled = true,
   });
 
   @override
@@ -602,7 +604,9 @@ class _CookieSectionState extends ConsumerState<_CookieSection> {
       final svc = ref.read(cookieServiceProvider);
       final s = await svc.fetchStatus();
       if (mounted) setState(() => _status = s);
-    } catch (_) {}
+    } catch (e) {
+      DebugLogBus.add('[Settings] 获取 Cookie 状态失败: $e');
+    }
   }
 
   Future<void> _upload(String type) async {

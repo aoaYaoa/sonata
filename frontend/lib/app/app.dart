@@ -10,6 +10,7 @@ import '../services/player_controller.dart';
 import '../services/theme_controller.dart';
 import '../services/providers.dart';
 import '../data/providers.dart';
+import '../services/debug_log_bus.dart';
 
 class SolaraApp extends ConsumerStatefulWidget {
   const SolaraApp({super.key});
@@ -79,7 +80,9 @@ class _SolaraAppState extends ConsumerState<SolaraApp> {
           ),
         );
       }
-    } catch (_) {}
+    } catch (e) {
+      DebugLogBus.add('[SolaraApp] 检查 Cookie 状态失败: $e');
+    }
   }
 
   static ThemeMode _resolveThemeMode(String mode) {

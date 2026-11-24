@@ -13,6 +13,7 @@ import '../../services/eq_service.dart';
 import '../../services/sleep_timer_service.dart';
 import '../queue/queue_panel.dart';
 import 'mv_player_screen.dart';
+import '../../services/debug_log_bus.dart';
 
 class NowPlayingScreen extends ConsumerStatefulWidget {
   const NowPlayingScreen({super.key});
@@ -184,7 +185,9 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
     if (useSystemVolume) {
       try {
         vol = await VolumeController().getVolume();
-      } catch (_) {}
+      } catch (e) {
+        DebugLogBus.add('[NowPlaying] 读取系统音量失败，回退到应用内音量: $e');
+      }
     }
     if (!context.mounted) return;
     showModalBottomSheet(

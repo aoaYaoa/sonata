@@ -113,6 +113,10 @@ void main() {
 
     expect(controller.state.currentSong?.id, '1');
     expect(controller.state.isPlaying, true);
+
+    // 歌词与封面是并行后台加载的（playSong 不阻塞返回），
+    // 需要让出事件循环后再断言。
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(controller.state.lyrics.isNotEmpty, true);
   });
 }

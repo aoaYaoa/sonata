@@ -13,11 +13,12 @@ import '../data/solara_repository.dart';
 import '../data/providers.dart';
 import '../platform/audio_engine.dart';
 import '../platform/just_audio_engine.dart';
+import 'debug_log_bus.dart';
 import '../services/lyric_parser.dart';
 import '../services/theme_controller.dart';
 import '../services/app_config.dart';
 import '../services/persistent_state_service.dart';
-import '../main.dart' show audioHandler, sharedPlayer;
+import '../main.dart' show nowPlayingHandler, sharedPlayer;
 
 class PlayerController extends StateNotifier<PlayerState> {
   final SolaraRepository repository;
@@ -69,7 +70,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     // 立即 seek 回起点，让 just_audio 脱离 completed 状态
     // 避免 iOS 系统因 completed 状态关闭 Now Playing 会话（灵动岛/锁屏）
     engine.seek(Duration.zero).ignore();
-    audioHandler.beginSwitching();
+    nowPlayingHandler?.beginSwitching();
     final queue = getQueue?.call() ?? [];
     final playMode = getPlayMode?.call() ?? PlayMode.list;
     final currentIndex = getCurrentQueueIndex?.call() ?? 0;
@@ -175,7 +176,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     immediateArtworkUrl ??= previousArtworkUrl;
 
     // 更新锁屏/通知栏信息
-    audioHandler.setNowPlaying(
+    nowPlayingHandler?.setNowPlaying(
       title: song.name,
       artist: song.artist,
       artworkUrl: immediateArtworkUrl,
@@ -204,7 +205,7 @@ class PlayerController extends StateNotifier<PlayerState> {
       }
       await engine.setSource(url);
       engine.play().catchError((e) {
-        print('[PlayerController] play() error (ignored): $e');
+        DebugLogBus.add('[PlayerController] play() error (ignored): $e');
       });
 
       // 如果有指定起始位置，在解除 loading 锁之前 seek，避免 _tick() 用0覆盖
@@ -214,11 +215,11 @@ class PlayerController extends StateNotifier<PlayerState> {
       // 引擎就绪，解除 loading 锁，让 _tick() 开始同步
       _isLoading = false;
       _isSwitching = false;
-      audioHandler.endSwitching();
+      nowPlayingHandler?.endSwitching();
       state = state.copyWith(isPlaying: true, position: seekTo ?? state.position);
 
       // 立即更新锁屏/灵动岛，使用已知封面和 duration
-      audioHandler.setNowPlaying(
+      nowPlayingHandler?.setNowPlaying(
         title: song.name,
         artist: song.artist,
         artworkUrl: immediateArtworkUrl,
@@ -258,7 +259,7 @@ class PlayerController extends StateNotifier<PlayerState> {
             await themeController.updateFromArtwork(artworkUrl);
             if (state.currentSong?.id == song.id) {
               state = state.copyWith(artworkUrl: artworkUrl);
-              audioHandler.setNowPlaying(
+              nowPlayingHandler?.setNowPlaying(
                 title: song.name,
                 artist: song.artist,
                 artworkUrl: artworkUrl,
@@ -266,7 +267,9 @@ class PlayerController extends StateNotifier<PlayerState> {
               );
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          DebugLogBus.add('[PlayerController] 封面/主题加载失败: $e');
+        }
       }();
 
       // 歌词和封面完全后台加载，不阻塞 playSong 返回
@@ -276,7 +279,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     } catch (e, st) {
       _isLoading = false;
       _isSwitching = false;
-      print('[PlayerController] playSong error: $e\n$st');
+      DebugLogBus.add('[PlayerController] playSong error: $e\n$st');
       state = state.copyWith(error: e.toString(), isPlaying: false);
     }
   }
@@ -292,7 +295,7 @@ class PlayerController extends StateNotifier<PlayerState> {
       if (dur != null || attempts >= 25) {
         timer.cancel();
         if (dur != null) {
-          audioHandler.setNowPlaying(
+          nowPlayingHandler?.setNowPlaying(
             title: song.name,
             artist: song.artist,
             artworkUrl: state.artworkUrl ?? artworkUrl,
@@ -326,7 +329,7 @@ class PlayerController extends StateNotifier<PlayerState> {
       artworkUrl: artworkUrl,
       error: null,
     );
-    audioHandler.setNowPlaying(
+    nowPlayingHandler?.setNowPlaying(
       title: song.name,
       artist: song.artist,
       artworkUrl: artworkUrl,
@@ -503,7 +506,7 @@ final playerControllerProvider =
         );
 
         // 注入锁屏/灵动岛/控制中心切歌回调
-        audioHandler.onSkipNext = () async {
+        nowPlayingHandler?.onSkipNext = () async {
           final q = ref.read(queueStateProvider);
           final settings = ref.read(settingsStateProvider);
           await controller.skipNext(
@@ -513,7 +516,7 @@ final playerControllerProvider =
             quality: settings.playbackQuality,
           );
         };
-        audioHandler.onSkipPrevious = () async {
+        nowPlayingHandler?.onSkipPrevious = () async {
           final q = ref.read(queueStateProvider);
           final settings = ref.read(settingsStateProvider);
           await controller.skipPrevious(
