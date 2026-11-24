@@ -78,20 +78,39 @@ func (d *PostgreSQLDatabase) Connect() (*gorm.DB, error) {
 	return db, nil
 }
 
+// buildPostgresDSN 构建 pgx 连接串。
+//
+// 关于 PgBouncer/Supabase pooler 与 prepared statement 的冲突：
+// pooler 的 transaction 模式会复用服务端连接，而 pgx 默认按 SQL 文本缓存
+// prepared statement 名称（stmtcache_xxx）。当两条连接复用到同一个后端会话时，
+// 第二次 Prepare 会报 `SQLSTATE 42P05 prepared statement ... already exists`，
+// Outbox 每 500ms 轮询一次就会把日志刷成 85MB。
+//
+// 修复要点：
+//   - default_query_exec_mode=simple_protocol：走简单查询协议，不发送 Parse/Prepare；
+//   - statement_cache_capacity=0：彻底关闭客户端语句缓存；
+//   - prefer_simple_protocol 是 pgx v4 的参数名，v5 不认，已移除；
+//   - TimeZone 用 URL 编码的 key（pgx 会把它当运行时参数）。
 func buildPostgresDSN(cfg *DatabaseConfig) string {
 	sslMode := strings.TrimSpace(cfg.SSLMode)
 	if sslMode == "" {
 		sslMode = "disable"
 	}
 
+	params := []string{
+		fmt.Sprintf("sslmode=%s", sslMode),
+		"TimeZone=Asia/Shanghai",
+		"default_query_exec_mode=simple_protocol",
+		"statement_cache_capacity=0",
+	}
 	return fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai prefer_simple_protocol=true",
+		"host=%s user=%s password=%s dbname=%s port=%d %s",
 		cfg.Host,
 		cfg.Username,
 		cfg.Password,
 		cfg.Database,
 		cfg.Port,
-		sslMode,
+		strings.Join(params, " "),
 	)
 }
 

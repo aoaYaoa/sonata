@@ -111,6 +111,6 @@ func initHandlers(svcs *servicesHolder, manager *database.Manager) *handlers.Han
 		User:    handlers.NewUserHandler(svcs.User),
 		Health:  handlers.NewHealthHandler(svcs.Health),
 		Captcha: handlers.NewCaptchaHandler(),
-		Solara:  handlers.NewSolaraHandler(manager.GetDB()),
+		Solara:  handlers.NewSolaraHandler(manager.GetDB()), // manager 不可用时返回 nil，已在 handler 内部兜底
 	}
 }

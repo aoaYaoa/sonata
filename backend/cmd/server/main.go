@@ -10,7 +10,6 @@ import (
 	"backend/pkg/utils/jwt"
 	"backend/pkg/utils/logger"
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,14 +22,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// @title SkyTracker API
+// @title Solara API
 // @version 1.0
-// @description 实时航班追踪与航空数据可视化平台 API
+// @description Solara 多平台音乐播放器后端 API（搜索/播放地址/发现页/云同步）
 // @termsOfService http://swagger.io/terms/
 
-// @contact.name API Support
-// @contact.url https://github.com/skytracker
-// @contact.email support@skytracker.com
+// @contact.name Solara Maintainer
+// @contact.url https://github.com/uonoe/solara
+// @contact.email maintainer@uonoe.com
 
 // @license.name Apache 2.0
 // @license.url http://www.apache.org/licenses/LICENSE-2.0.html
@@ -46,7 +45,7 @@ func main() {
 	// 初始化配置
 	config.Init()
 
-	// 初始化日志
+	// 初始化日志（目录可配置，避免日志按当前工作目录散落）
 	logger.Init()
 
 	// 初始化 JWT 默认密钥（供登录与鉴权统一使用）
@@ -54,6 +53,9 @@ func main() {
 		logger.Errorf("JWT 配置无效: %v", err)
 		panic(err)
 	}
+	// 只打印密钥指纹，便于多环境核验"是否用了同一把密钥"，
+	// 又不把密钥本身写进日志/日志采集系统。
+	logger.Infof("JWT 密钥指纹: %s", jwt.SecretFingerprint(config.AppConfig.JWTSecret))
 
 	// 启用签名校验时，强制要求配置有效 AES 密钥。
 	if config.AppConfig.EnableSignature {
@@ -113,19 +115,14 @@ func main() {
 				ShutdownTimeout: 3 * time.Second,
 			})
 
-			var outboxStore messaging.OutboxStore
-			var outboxErr error
-			if dbManager != nil {
-				outboxStore, outboxErr = messaging.NewGormOutboxStore(dbManager.GetDB())
-			} else {
-				outboxErr = fmt.Errorf("db unavailable")
-			}
-			_ = outboxStore
+			outboxStore, outboxErr := messaging.NewGormOutboxStore(dbManager.GetDB())
 			if outboxErr != nil {
 				logger.Warnf("Outbox 初始化失败，将仅使用异步发布: %v", outboxErr)
 			} else {
 				publisher = messaging.NewOutboxPublisher(outboxStore, publisher, messaging.OutboxPublisherConfig{
-					PollInterval:        500 * time.Millisecond,
+					// 轮询间隔从 500ms 提到 3s：
+					// 原值在数据库异常时每秒刷两条错误日志，实测把 backend/logs 刷到 85MB。
+					PollInterval:        3 * time.Second,
 					BatchSize:           100,
 					PublishTimeout:      2 * time.Second,
 					MaxDeliveryAttempts: 6,
@@ -165,8 +162,12 @@ func main() {
 	// 配置可信代理 (消除启动警告)
 	// 在生产环境中，应该设置为实际的负载均衡器或反向代理的 IP
 	// 这里设置为 nil 表示不信任任何代理，或者设置为 "*" 信任所有（仅限内网安全环境）
-	if err := r.SetTrustedProxies(nil); err != nil {
+	trustedProxies := config.AppConfig.TrustedProxies
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
 		logger.Warnf("设置可信代理失败: %v", err)
+	}
+	if len(trustedProxies) == 0 {
+		logger.Infof("未配置 TRUSTED_PROXIES，c.ClientIP() 使用直连地址（限流/审计按真实来源计数）")
 	}
 
 	// 启动服务器配置
