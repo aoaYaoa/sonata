@@ -18,7 +18,8 @@ certs/
 credentials.json
 
 # 文档与测试产物
-docs/
+# 注意：不能排除 docs/ —— cmd/server/main.go 有 `_ "backend/docs"` 导入，
+# 该目录同时存放 swagger 生成代码（docs.go、swagger.json/yaml），排除后镜像构建会失败。
 *.md
 coverage.out
 *.test
