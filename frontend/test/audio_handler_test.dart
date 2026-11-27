@@ -29,6 +29,9 @@ class _TestPlayer extends Fake implements AudioPlayer {
   @override
   double get speed => 1;
 
+  @override
+  Future<void> stop() async => emit(ProcessingState.idle, isPlaying: false);
+
   void emit(ProcessingState state, {required bool isPlaying}) {
     processingState = state;
     playing = isPlaying;
@@ -85,9 +88,20 @@ void main() {
     );
   });
 
-  test('即使仍在交接，停止播放也对媒体服务上报 idle', () {
+  test('交接内部暂停不停止媒体服务', () {
     handler.beginSwitching();
     player.emit(ProcessingState.idle, isPlaying: false);
+
+    expect(
+      handler.playbackState.value.processingState,
+      AudioProcessingState.loading,
+    );
+    expect(handler.playbackState.value.playing, isTrue);
+  });
+
+  test('即使仍在交接，停止播放也对媒体服务上报 idle', () async {
+    handler.beginSwitching();
+    await handler.stop();
 
     expect(
       handler.playbackState.value.processingState,

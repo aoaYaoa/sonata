@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'audio_engine.dart';
 
@@ -64,7 +65,16 @@ class JustAudioEngine implements AudioEngine {
 
   @override
   Future<void> setSource(String url) async {
-    await _player.setUrl(url);
+    final loadedDuration = await _player.setUrl(url);
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    final uri = Uri.parse(url);
+    if ((uri.scheme == 'https' || uri.scheme == 'http') &&
+        uri.path.toLowerCase().endsWith('.flac')) {
+      final end = _player.duration ?? loadedDuration;
+      if (end != null && end > Duration.zero) {
+        await _player.setClip(end: end);
+      }
+    }
   }
 
   @override

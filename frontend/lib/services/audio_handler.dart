@@ -32,11 +32,10 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   void _broadcastState() {
-    final playing = _player.playing;
+    final playing = _isSwitching || _player.playing;
     final rawState = _player.processingState;
     final isSourceTransition =
         _isSwitching &&
-        playing &&
         (rawState == ProcessingState.completed ||
             rawState == ProcessingState.idle);
     final mappedState =
@@ -102,10 +101,15 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> play() => _player.play();
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() async {
+    _isSwitching = false;
+    await _player.pause();
+    _broadcastState();
+  }
 
   @override
   Future<void> stop() async {
+    _isSwitching = false;
     await _player.stop();
     await super.stop();
   }
