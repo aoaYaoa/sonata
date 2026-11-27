@@ -42,12 +42,6 @@ class PlayerController extends StateNotifier<PlayerState> {
   /// 自己已经过时，不要再补一次 skipNext（否则连跳两首）。
   int _advanceGeneration = 0;
 
-  /// 正在「上一首播完 → 下一首起来」的交接窗口。
-  ///
-  /// 这个窗口里我们主动 pause 了引擎（否则 completed 状态下 seek(0) 会让上一首
-  /// 继续唱），但 UI 不该闪成「已暂停」——歌没停，只是下一首还在路上。
-  bool _isHandoff = false;
-
   /// 预取到的流地址。key = `source:id:tier`。
   ///
   /// 命中就用完即删：直链是带时效的临时签名，放久了会 403。
@@ -93,7 +87,6 @@ class PlayerController extends StateNotifier<PlayerState> {
     // 防止 seek(Duration.zero) 触发二次 complete 事件导致重复切歌
     if (_isSwitching) return;
     _isSwitching = true;
-    _isHandoff = true;
     nowPlayingHandler?.beginSwitching();
     final generation = ++_advanceGeneration;
     unawaited(_advanceAfterComplete(generation));
@@ -101,20 +94,20 @@ class PlayerController extends StateNotifier<PlayerState> {
 
   /// 播完 → 切下一首。
   ///
-  /// 顺序必须是「先 pause、再 seek(0)、最后才去取下一首的流」，三点原因：
-  ///  1. completed 状态下 just_audio 的 playing 仍是 true，直接 seek(0) 会让
-  ///     上一首从头再唱，用户听到「这首歌又重播了几秒才跳走」；
-  ///  2. 取流是网络往返（后端还要串上游，冷启动 600ms~2s），必须等静音之后
-  ///     再开始，否则这段时间是「上一首在响」；
-  ///  3. seek(0) 让引擎脱离 completed，iOS 才不会因此关掉 Now Playing 会话
-  ///     （灵动岛/锁屏的控制失效）。
+  /// 这里**不 pause、不 seek(0)**，只有一个动作：把下一首装上。
+  ///
+  /// 踩过的两个坑都记在这：
+  ///  - 原来 completion 里立刻 `seek(Duration.zero)`：completed 状态下 just_audio
+  ///    的 `playing` 仍是 true，回零等于让上一首从头再唱，等下一首的流取回来
+  ///    （冷启动 600ms~2s）才切走，就是「这首歌重播了几秒才跳走」。
+  ///  - 改成「先 pause 再 seek」之后：音频早就播完，pause 没有东西可静音，反而
+  ///    让 audio_service 上报 `playing: false`，iOS 顺势把 AVAudioSession 停掉，
+  ///    下一首 `setSource` 装好了却不出声——「加载完直接不播放，声音直接断了」。
+  ///
+  /// 正确的做法是什么都不做：completed 状态下本来就没有音频在响，直接换源即可。
+  /// `setSource` 本身就会让引擎离开 completed；`_isSwitching` 负责在交接窗口里
+  /// 不向系统广播 completed，灵动岛/锁屏因此不会被关掉。
   Future<void> _advanceAfterComplete(int generation) async {
-    try {
-      await engine.pause();
-      await engine.seek(Duration.zero);
-    } catch (e) {
-      DebugLogBus.add('[PlayerController] 交接暂停失败: $e');
-    }
     // 用户已经手动切过歌了：这次自动交接作废。
     if (generation != _advanceGeneration) return;
     final queue = getQueue?.call() ?? [];
@@ -126,7 +119,6 @@ class PlayerController extends StateNotifier<PlayerState> {
     if (queue.isEmpty || playMode == PlayMode.single) {
       final song = state.currentSong;
       if (song == null) {
-        _isHandoff = false;
         _isSwitching = false;
         nowPlayingHandler?.endSwitching();
         return;
@@ -147,13 +139,9 @@ class PlayerController extends StateNotifier<PlayerState> {
     if (_isLoading) return;
     // 同步引擎播放状态（被其他 app 打断时引擎会暂停，需及时反映到 UI）
     final enginePlaying = engine.isPlaying;
-    // 交接窗口里引擎是故意暂停的，别把 UI 闪成「已暂停」。
-    if (enginePlaying != state.isPlaying && !_isLoading && !_isHandoff) {
+    if (enginePlaying != state.isPlaying && !_isLoading) {
       state = state.copyWith(isPlaying: enginePlaying);
     }
-    // 交接窗口里不要拿引擎的 position 覆盖：我们在窗口内 seek(0) 了，
-    // 直接同步会让进度条从末尾瞬移到 0，看着像「重头播了」。
-    if (_isHandoff) return;
     // 引擎未加载（duration为null且未播放）时不更新 position/duration，保留启动恢复的值
     if (engine.duration == null && !enginePlaying) return;
     final position = engine.position;
@@ -380,7 +368,6 @@ class PlayerController extends StateNotifier<PlayerState> {
       // 引擎就绪，解除 loading 锁，让 _tick() 开始同步
       _isLoading = false;
       _isSwitching = false;
-      _isHandoff = false;
       nowPlayingHandler?.endSwitching();
       state = state.copyWith(
         isPlaying: true,
@@ -469,7 +456,6 @@ class PlayerController extends StateNotifier<PlayerState> {
     } catch (e, st) {
       _isLoading = false;
       _isSwitching = false;
-      _isHandoff = false;
       DebugLogBus.add('[PlayerController] playSong error: $e\n$st');
       state = state.copyWith(error: e.toString(), isPlaying: false);
     }

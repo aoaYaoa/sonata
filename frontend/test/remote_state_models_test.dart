@@ -9,13 +9,13 @@ void main() {
       'queue': {
         'updatedAt': '2026-03-12T10:01:00Z',
         'songs': [
-          {'id': '1', 'name': 'A'}
+          {'id': '1', 'name': 'A'},
         ],
       },
       'favorites': {
         'updatedAt': '2026-03-12T10:02:00Z',
         'songs': [
-          {'id': '2', 'name': 'B'}
+          {'id': '2', 'name': 'B'},
         ],
       },
       'settings': {

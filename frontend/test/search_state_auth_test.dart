@@ -8,10 +8,10 @@ import 'package:solara_flutter/domain/state/search_state.dart';
 
 class AuthFailRepo extends SolaraRepository {
   AuthFailRepo()
-      : super(
-          api: SolaraApi(client: ApiClient(baseUrl: 'https://example.com')),
-          dio: Dio(BaseOptions(baseUrl: 'https://example.com')),
-        );
+    : super(
+        api: SolaraApi(client: ApiClient(baseUrl: 'https://example.com')),
+        dio: Dio(BaseOptions(baseUrl: 'https://example.com')),
+      );
 
   @override
   Future<List<Song>> search({
@@ -25,14 +25,15 @@ class AuthFailRepo extends SolaraRepository {
 }
 
 void main() {
-  test('SearchStateNotifier sets error state when auth fails after interceptor retry', () async {
-    final notifier = SearchStateNotifier(
-      repository: AuthFailRepo(),
-    );
+  test(
+    'SearchStateNotifier sets error state when auth fails after interceptor retry',
+    () async {
+      final notifier = SearchStateNotifier(repository: AuthFailRepo());
 
-    await notifier.search('hello');
+      await notifier.search('hello');
 
-    expect(notifier.state.loading, isFalse);
-    expect(notifier.state.error, isNotNull);
-  });
+      expect(notifier.state.loading, isFalse);
+      expect(notifier.state.error, isNotNull);
+    },
+  );
 }

@@ -25,12 +25,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 请求都会留下 pending timer 让测试失败。这里把仓库整体替换掉。
 class EmptyRepo extends SolaraRepository {
   EmptyRepo()
-      : super(
-          api: SolaraApi(
-            client: ApiClient(baseUrl: 'https://example.com', dio: Dio()),
-          ),
-          dio: Dio(),
-        );
+    : super(
+        api: SolaraApi(
+          client: ApiClient(baseUrl: 'https://example.com', dio: Dio()),
+        ),
+        dio: Dio(),
+      );
 
   @override
   Future<List<SongListItem>> fetchSongList({
@@ -70,7 +70,7 @@ class EmptyCookieService extends CookieService {
 
 class TestAuthNotifier extends AuthStateNotifier {
   TestAuthNotifier()
-      : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
+    : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
 
   /// 真实实现会用内置口令打一次 /api/login，widget test 里那是真实网络请求，
   /// 会留下 pending timer。测试只关心「已登录/未登录」两种状态的 UI，
@@ -96,7 +96,7 @@ class NoopStorageService extends StorageService {
 
 class NoopRemoteStorageService extends RemoteStorageService {
   NoopRemoteStorageService()
-      : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
+    : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
 
   @override
   Future<RemoteStateSnapshot?> fetchState() async => null;
@@ -109,7 +109,7 @@ class FakeSyncController extends SyncController {
   bool initializeCalled = false;
 
   FakeSyncController()
-      : super(storage: NoopStorageService(), remote: NoopRemoteStorageService());
+    : super(storage: NoopStorageService(), remote: NoopRemoteStorageService());
 
   @override
   Future<void> initialize() async {

@@ -9,27 +9,26 @@ void main() {
     final requests = <RequestOptions>[];
     final dio = Dio(BaseOptions(baseUrl: 'https://example.com'));
     dio.interceptors.add(
-      InterceptorsWrapper(onRequest: (options, handler) {
-        requests.add(options);
-        handler.resolve(
-          Response(
-            requestOptions: options,
-            data: {
-              'd1Available': true,
-              'data': {
-                'solara_state': {
-                  'version': 1,
-                  'updatedAt': '2026-03-12T10:00:00Z',
-                  'queue': {
-                    'updatedAt': '2026-03-12T10:01:00Z',
-                    'songs': [],
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          requests.add(options);
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              data: {
+                'd1Available': true,
+                'data': {
+                  'solara_state': {
+                    'version': 1,
+                    'updatedAt': '2026-03-12T10:00:00Z',
+                    'queue': {'updatedAt': '2026-03-12T10:01:00Z', 'songs': []},
                   },
-                }
+                },
               },
-            },
-          ),
-        );
-      }),
+            ),
+          );
+        },
+      ),
     );
 
     final service = RemoteStorageService(
@@ -49,16 +48,18 @@ void main() {
     final payloads = <dynamic>[];
     final dio = Dio(BaseOptions(baseUrl: 'https://example.com'));
     dio.interceptors.add(
-      InterceptorsWrapper(onRequest: (options, handler) {
-        requests.add(options);
-        payloads.add(options.data);
-        handler.resolve(
-          Response(
-            requestOptions: options,
-            data: {'d1Available': true, 'updated': 1},
-          ),
-        );
-      }),
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          requests.add(options);
+          payloads.add(options.data);
+          handler.resolve(
+            Response(
+              requestOptions: options,
+              data: {'d1Available': true, 'updated': 1},
+            ),
+          );
+        },
+      ),
     );
 
     final service = RemoteStorageService(
@@ -76,27 +77,21 @@ void main() {
     expect(success, isTrue);
     expect(requests.single.method, 'POST');
     expect(requests.single.path, '/api/storage');
-    expect(
-      payloads.single,
-      {
-        'data': {
-          'solara_state': snapshot.toJson(),
-        }
-      },
-    );
+    expect(payloads.single, {
+      'data': {'solara_state': snapshot.toJson()},
+    });
   });
 
   test('RemoteStorageService returns null when d1 unavailable', () async {
     final dio = Dio(BaseOptions(baseUrl: 'https://example.com'));
     dio.interceptors.add(
-      InterceptorsWrapper(onRequest: (options, handler) {
-        handler.resolve(
-          Response(
-            requestOptions: options,
-            data: {'d1Available': false},
-          ),
-        );
-      }),
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          handler.resolve(
+            Response(requestOptions: options, data: {'d1Available': false}),
+          );
+        },
+      ),
     );
 
     final service = RemoteStorageService(

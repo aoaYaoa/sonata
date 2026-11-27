@@ -27,9 +27,7 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
   void endSwitching() => _isSwitching = false;
 
   void _broadcastState() {
-    // 交接窗口里我们主动 pause 过引擎，但对系统而言歌还在放（只是下一首在路上）。
-    // 照实上报 false 会让锁屏/灵动岛闪一下暂停图标。
-    final playing = _player.playing || _isSwitching;
+    final playing = _player.playing;
     final rawState = _player.processingState;
     // 切歌过渡期间，不向系统广播 completed，避免灵动岛/锁屏被关闭
     final mappedState =

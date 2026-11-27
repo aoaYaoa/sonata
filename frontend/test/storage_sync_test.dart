@@ -31,7 +31,7 @@ class FakeRemoteStorageService extends RemoteStorageService {
   RemoteStateSnapshot? saved;
 
   FakeRemoteStorageService()
-      : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
+    : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
 
   @override
   Future<RemoteStateSnapshot?> fetchState() async {
@@ -49,7 +49,7 @@ void main() {
   test('SyncController initializes and merges remote into local', () async {
     final storage = MemoryStorageService();
     await storage.setJson('playlistSongs', [
-      {'id': 'local', 'name': 'Local'}
+      {'id': 'local', 'name': 'Local'},
     ]);
     await storage.setJson('queueUpdatedAt', '2026-03-12T10:00:00Z');
 
@@ -60,7 +60,7 @@ void main() {
       queue: RemoteQueueState(
         updatedAt: DateTime.parse('2026-03-12T11:01:00Z'),
         songs: [
-          {'id': 'remote', 'name': 'Remote'}
+          {'id': 'remote', 'name': 'Remote'},
         ],
       ),
     );
@@ -85,7 +85,7 @@ void main() {
       );
 
       storage.setJson('favoriteSongs', [
-        {'id': 'fav', 'name': 'Fav'}
+        {'id': 'fav', 'name': 'Fav'},
       ]);
       storage.setJson('favoritesUpdatedAt', '2026-03-12T10:00:00Z');
       async.flushMicrotasks();

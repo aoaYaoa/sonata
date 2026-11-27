@@ -216,7 +216,7 @@ void main() {
     expect(controller.state.currentSong?.id, '2');
   });
 
-  test('播完先暂停再归零，避免上一首重播几秒', () async {
+  test('播完不 pause 也不 seek，直接装下一首', () async {
     final repo = FakeRepo();
     final queue = [songOf('1'), songOf('2')];
     var index = 0;
@@ -234,14 +234,22 @@ void main() {
     );
 
     await controller.playSong(queue[0], quality: '320');
+    // 等预取落地（真实场景里歌长几十秒，预取早完成了；测试里得显式等）。
+    await Future<void>.delayed(const Duration(milliseconds: 40));
     engine.calls.clear();
     engine.fakeComplete();
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-
-    // 关键顺序：pause 一定在 seek 之前，否则 completed 状态下 seek(0)
-    // 会让上一首从头再唱。
-    expect(engine.calls.take(2).toList(), ['pause', 'seek']);
     await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    // 这两条是踩过的坑，别再走回去：
+    //  - 播完就 seek(0)：completed 时 playing 仍为 true，上一首从头再唱，
+    //    要等下一首的流回来才切走 →「重播几秒才跳走」；
+    //  - 先 pause 再 seek：pause 让 audio_service 上报 playing:false，
+    //    iOS 顺势停掉音频会话，下一首装好了但没声音 →「加载完不播放」。
+    expect(engine.calls.contains('pause'), isFalse);
+    expect(engine.calls.contains('seek'), isFalse);
+
     expect(controller.state.currentSong?.id, '2');
+    expect(controller.state.isPlaying, isTrue, reason: '下一首必须真的在播');
+    expect(repo.streamCalls['2'], 1, reason: '命中预取，不该再请求');
   });
 }
