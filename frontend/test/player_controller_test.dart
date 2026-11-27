@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:solara_flutter/domain/models/song.dart';
+import 'package:solara_flutter/domain/models/stream_info.dart';
 import 'package:solara_flutter/services/player_controller.dart';
 import 'package:solara_flutter/services/persistent_state_service.dart';
 import 'package:solara_flutter/services/storage_service.dart';
@@ -14,9 +15,21 @@ import 'package:dio/dio.dart';
 class FakeRepo extends SolaraRepository {
   FakeRepo() : super(api: SolaraApi(client: ApiClient(baseUrl: 'https://example.com')), dio: Dio());
 
+  // playSong 直接调 fetchStream（要拿到实际档位/码率/是否试听），
+  // 只覆盖 fetchSongUrl 的话会走真实网络，测试里必然抛异常。
   @override
-  Future<String> fetchSongUrl({required String songId, required String source, required String quality}) async {
-    return 'https://example.com/$songId.mp3';
+  Future<StreamInfo> fetchStream({
+    required String songId,
+    required String source,
+    required String quality,
+    String? mediaId,
+  }) async {
+    return StreamInfo(
+      url: 'https://example.com/$songId.mp3',
+      quality: '320',
+      bitrate: 320000,
+      ext: 'mp3',
+    );
   }
 
   @override

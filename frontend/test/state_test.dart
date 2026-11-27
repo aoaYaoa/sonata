@@ -56,7 +56,8 @@ void main() {
 
   test('Settings updates', () {
     final notifier = SettingsStateNotifier(persistence: persistence);
-    expect(notifier.state.playbackQuality, '320');
+    // 默认音质是 auto：固定 320 在 QQ 匿名态永远拿不到，反而误导用户。
+    expect(notifier.state.playbackQuality, 'auto');
 
     notifier.setPlaybackQuality('128');
     expect(notifier.state.playbackQuality, '128');

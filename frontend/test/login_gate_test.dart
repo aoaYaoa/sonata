@@ -45,6 +45,7 @@ class EmptyRepo extends SolaraRepository {
   Future<List<LeaderboardItem>> fetchLeaderboardList({
     required String source,
     int limit = 30,
+    bool onlyAvailable = false,
   }) async => const [];
 
   @override
@@ -70,6 +71,12 @@ class EmptyCookieService extends CookieService {
 class TestAuthNotifier extends AuthStateNotifier {
   TestAuthNotifier()
       : super(client: ApiClient(baseUrl: 'https://example.com', dio: Dio()));
+
+  /// 真实实现会用内置口令打一次 /api/login，widget test 里那是真实网络请求，
+  /// 会留下 pending timer。测试只关心「已登录/未登录」两种状态的 UI，
+  /// 所以这里直接把恢复会话短路掉。
+  @override
+  Future<void> restoreSession() async {}
 
   void setAuthed(bool value) {
     state = AuthState(isAuthed: value);
@@ -115,15 +122,23 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  testWidgets('Unauthed user sees login', (tester) async {
+  testWidgets('Unauthed user sees connection fallback', (tester) async {
     await tester.pumpWidget(const ProviderScope(child: SolaraApp()));
     // initState 里通过 microtask 恢复会话，先让出一次事件循环，
     // 否则还停留在 _sessionRestored=false 的加载圈。
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    // 登录页按钮文案是中文「登录」
-    expect(find.text('登录'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
+    // 登录对用户隐藏：自动登录失败时露出的是连接兜底页，不再提供口令输入框，
+    // 只有一个重试入口。
+    expect(find.text('连接不上服务'), findsOneWidget);
+    expect(find.text('重新连接'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('Authed user triggers sync initialization', (tester) async {
