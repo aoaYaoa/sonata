@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -58,22 +59,54 @@ func jamendoSongList() ([]map[string]interface{}, error) {
 		if !ok {
 			continue
 		}
+		cover, _ := m["image"].(string)
+		name, _ := m["dispname"].(string)
+		// 部分电台的官方配图在 CDN 上已经 404（piano/happy），
+		// 用同名 tag 的曲目封面兜底，避免卡片只剩渐变底。
+		if !jamendoImageAlive(cover) {
+			cover = jamendoFirstPic(strings.ToLower(strings.TrimSuffix(name, " Radio")))
+		}
 		songLists = append(songLists, map[string]interface{}{
 			"id":          fmt.Sprintf("%v", m["id"]),
-			"name":        m["dispname"],
+			"name":        name,
 			"author":      "Jamendo Radio",
-			"coverUrl":    m["image"],
+			"coverUrl":    cover,
 			"playCount":   "",
-			"description": fmt.Sprintf("%s - Free Music Radio", m["dispname"]),
+			"description": fmt.Sprintf("%s - Free Music Radio", name),
 			"source":      "jamendo",
 		})
 	}
 	return songLists, nil
 }
 
+// jamendoImageAlive 探测封面地址是否还能取到图。
+//
+// 只发 HEAD 并限制 3 秒：电台列表本身是内存里拼的，探测失败就降级，
+// 不能让一个 404 的图拖住整个歌单接口。
+func jamendoImageAlive(url string) bool {
+	if url == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest(http.MethodHead, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
 // jamendoSongListDetail 获取 Jamendo 歌单详情（通过电台名称获取对应标签的歌曲）
 
-func jamendoSongListDetail(radioID string, limit int) ([]map[string]interface{}, error) {
+func jamendoSongListDetail(
+	radioID string,
+	limit int,
+	offset int,
+) ([]map[string]interface{}, error) {
 	// 电台 ID 到标签的映射
 	radioTagMap := map[string]string{
 		"1":  "",           // bestof - 不指定标签，获取热门
@@ -103,34 +136,64 @@ func jamendoSongListDetail(radioID string, limit int) ([]map[string]interface{},
 		return nil, fmt.Errorf("JAMENDO_CLIENT_ID not configured")
 	}
 
+	// Jamendo 自己支持 offset，直接透传（原来只传 limit，
+	// 「加载更多」拿回的还是同一批）。
+	if offset < 0 {
+		offset = 0
+	}
 	var apiURL string
 	if tag == "" {
 		// 获取热门歌曲
 		apiURL = fmt.Sprintf(
-			"https://api.jamendo.com/v3.0/tracks?client_id=%s&order=popularity_total&format=json&limit=%d&include=musicinfo",
-			cid, limit,
+			"https://api.jamendo.com/v3.0/tracks?client_id=%s&order=popularity_total&format=json&limit=%d&offset=%d&include=musicinfo",
+			cid, limit, offset,
 		)
 	} else {
 		// 按标签获取歌曲
 		apiURL = fmt.Sprintf(
-			"https://api.jamendo.com/v3.0/tracks?client_id=%s&tags=%s&order=popularity_total&format=json&limit=%d&include=musicinfo",
-			cid, url.QueryEscape(tag), limit,
+			"https://api.jamendo.com/v3.0/tracks?client_id=%s&tags=%s&order=popularity_total&format=json&limit=%d&offset=%d&include=musicinfo",
+			cid, url.QueryEscape(tag), limit, offset,
 		)
 	}
 
 	return jamendoParseTracks(apiURL)
 }
 
-// jamendoFirstPic 获取分类第一首歌的封面
-
+// jamendoFirstPic 获取分类封面。
+//
+// Jamendo 的 tag 检索本身不稳定：同一个查询连续 5 次会在 0/1 条之间跳，
+// 并发 8 个分类时经常一半返回空。所以按「严格 tag → 模糊 tag → 热门兜底」
+// 三级降级，前两级各重试一次；兜底时按 tag 哈希从热门列表里挑不同的一张，
+// 避免几个缺图分类挂上同一张封面。
 func jamendoFirstPic(tag string) string {
 	cid := jamendoClientID()
 	if cid == "" {
 		return ""
 	}
+	for _, q := range []string{
+		"tags=" + url.QueryEscape(tag),
+		"fuzzytags=" + url.QueryEscape(tag),
+	} {
+		for attempt := 0; attempt < 2; attempt++ {
+			if img := jamendoCoverFromQuery(cid, q, 0); img != "" {
+				return img
+			}
+		}
+	}
+	// 兜底：热门曲目列表里按 tag 哈希取一张，宁可挂主题略有偏差的真图，
+	// 也不要音乐馆里出现空白卡片。
+	seed := 0
+	for _, ch := range tag {
+		seed = seed*31 + int(ch)
+	}
+	return jamendoCoverFromQuery(cid, "order=popularity_total", seed%8)
+}
+
+// jamendoCoverFromQuery 取一批结果里的第 pick 张封面（越界则取最后一张）。
+func jamendoCoverFromQuery(cid, query string, pick int) string {
 	apiURL := fmt.Sprintf(
-		"https://api.jamendo.com/v3.0/tracks?client_id=%s&tags=%s&order=popularity_total&format=json&limit=1",
-		cid, url.QueryEscape(tag),
+		"https://api.jamendo.com/v3.0/tracks?client_id=%s&%s&format=json&limit=8",
+		cid, query,
 	)
 	data, err := fetchJamendo(apiURL)
 	if err != nil {
@@ -140,7 +203,10 @@ func jamendoFirstPic(tag string) string {
 	if len(results) == 0 {
 		return ""
 	}
-	m, _ := results[0].(map[string]interface{})
+	if pick >= len(results) {
+		pick = len(results) - 1
+	}
+	m, _ := results[pick].(map[string]interface{})
 	if m == nil {
 		return ""
 	}

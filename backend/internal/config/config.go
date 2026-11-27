@@ -154,16 +154,16 @@ func LoadConfig() *Config {
 		// 运行时数据目录（替代硬编码 /app）
 		CookieDir: getEnv("COOKIE_DIR", "./data"),
 
-		// 图片代理白名单：默认只放行网易云图床
+		// 图片代理白名单：默认放行网易云、腾讯、酷狗、B站、YouTube、Jamendo 图床
 		ImgProxyAllowedHosts: splitAndTrim(getEnv(
 			"IMG_PROXY_ALLOWED_HOSTS",
-			".music.126.net,.126.net,.127.net,.netease.com",
+			".music.126.net,.126.net,.127.net,.netease.com,.qq.com,.gtimg.cn,.kugou.com,.hdslb.com,.ytimg.com,.jamendo.com",
 		)),
 
 		// 媒体流代理白名单
 		MediaProxyAllowedHosts: splitAndTrim(getEnv(
 			"MEDIA_PROXY_ALLOWED_HOSTS",
-			"kuwo.cn,.bilivideo.com,.bilivideo.cn,.bilibili.com,.akamaized.net,.googlevideo.com",
+			"kuwo.cn,.kuwo.cn,.bilivideo.com,.bilivideo.cn,.bilibili.com,.akamaized.net,.googlevideo.com,.kugou.com,.qqmusic.qq.com,.tc.qq.com",
 		)),
 
 		MetricsToken:     getEnv("METRICS_TOKEN", ""),

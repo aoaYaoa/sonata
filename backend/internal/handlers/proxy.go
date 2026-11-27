@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -118,19 +119,155 @@ func (h *SolaraHandler) Proxy(c *gin.Context) {
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported types for jamendo"})
 		}
+	case "tencent":
+		switch types {
+		case "search":
+			page := 1
+			count := 20
+			fmt.Sscanf(c.DefaultQuery("pages", "1"), "%d", &page)
+			fmt.Sscanf(c.DefaultQuery("count", "20"), "%d", &count)
+			results, err := qqSearch(c.Query("name"), page, count)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, results)
+		case "url":
+			info, err := qqVkey(c.Query("id"), c.Query("mid"), normalizeQuality(c.Query("br")))
+			if err != nil {
+				c.JSON(statusForSourceError(err), gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, withURL(info))
+		case "lyric":
+			lyric, err := qqLyric(c.Query("id"))
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+				return
+			}
+			writeJSON(c, http.StatusOK, gin.H{"lyric": lyric})
+		case "pic":
+			// 封面是公开图床，前端已带 pic_url，这里只做兼容返回
+			picID := c.Query("id")
+			writeJSON(c, http.StatusOK, gin.H{"url": qqCoverURL(picID, 300)})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported types for tencent"})
+		}
+	case "kugou":
+		switch types {
+		case "search":
+			page := 1
+			count := 20
+			fmt.Sscanf(c.DefaultQuery("pages", "1"), "%d", &page)
+			fmt.Sscanf(c.DefaultQuery("count", "20"), "%d", &count)
+			results, err := kugouSearch(c.Query("name"), page, count)
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, results)
+		case "url":
+			info, err := kugouStream(c.Query("id"), c.Query("mid"), normalizeQuality(c.Query("br")))
+			if err != nil {
+				c.JSON(statusForSourceError(err), gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, withURL(info))
+		case "lyric":
+			lyric, err := kugouLyric(c.Query("id"))
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+				return
+			}
+			writeJSON(c, http.StatusOK, gin.H{"lyric": lyric})
+		case "pic":
+			// 酷狗封面由搜索结果直接带 pic_url，前端不再单独请求
+			c.JSON(http.StatusBadRequest, gin.H{"error": "kugou cover is embedded in search result"})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported types for kugou"})
+		}
 	default:
-		// 国内四源：透传到 music-api，需将内部 source 名映射到上游 API 名
-		sourceRemap := map[string]string{
-			"tencent": "qq",
+		// 其余音源透传到上游聚合 API。
+		// 注意：这里曾有一个 sourceRemap{"tencent": "qq"}，但 tencent/kugou 现已
+		// 走上面的独立分支，且上游 music-api.gdstudio.xyz 早已不支持 qq/kugou，
+		// 该映射是死代码，一并删除。
+		if source == "netease" && types == "url" {
+			// 网易云的取流也统一回执格式：上游的 br 是 128/192/320/1476 这种，
+			// 前端需要和 QQ/酷狗一致的 quality/bitrate/ext 才能显示实际音质。
+			h.proxyNeteaseStream(c)
+			return
 		}
 		params := c.Request.URL.Query()
 		params.Del("url")
-		if remapped, ok := sourceRemap[params.Get("source")]; ok {
-			params.Set("source", remapped)
-		}
 		targetURL := musicAPIBase + "?" + params.Encode()
 		h.proxyRequest(c, targetURL, nil)
 	}
+}
+
+// proxyNeteaseStream 转发网易云取流并归一化回执。
+//
+// 上游 br 参数只吃整数（128/192/320/999），传 auto 会 422，
+// 所以这里必须把前端的档位标识翻译成上游认识的值。
+func (h *SolaraHandler) proxyNeteaseStream(c *gin.Context) {
+	q := normalizeQuality(c.Query("br"))
+	brParam := "320"
+	switch q {
+	case qualityFlac:
+		brParam = "999"
+	case quality320:
+		brParam = "320"
+	case quality128:
+		brParam = "128"
+	default:
+		brParam = "999" // auto：让上游给最高档
+	}
+
+	targetURL := fmt.Sprintf("%s?types=url&id=%s&source=netease&br=%s",
+		musicAPIBase, url.QueryEscape(c.Query("id")), brParam)
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to create request"})
+		return
+	}
+	resp, err := newGuardedHTTPClient(20 * time.Second).Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
+		return
+	}
+	defer resp.Body.Close()
+
+	var raw struct {
+		URL  string `json:"url"`
+		BR   int    `json:"br"`
+		Size int64  `json:"size"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "invalid upstream response"})
+		return
+	}
+	if raw.URL == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": errNeedVip.Error()})
+		return
+	}
+
+	// 上游把无损的 br 报成 1476（kbps），统一按我们的档位口径归类
+	bitrate := raw.BR
+	if bitrate > 0 && bitrate < 10000 {
+		bitrate *= 1000
+	}
+	ext := "mp3"
+	if strings.Contains(strings.ToLower(raw.URL), ".flac") {
+		ext = "flac"
+	}
+	c.JSON(http.StatusOK, withURL(streamInfo{
+		URL:      raw.URL,
+		Quality:  qualityOfBitrate(bitrate),
+		Bitrate:  bitrate,
+		Ext:      ext,
+		Size:     raw.Size,
+		Upstream: "gdstudio",
+	}))
 }
 
 // ImgProxy 代理网易云图片，加上 Referer 头绕过防盗链。
@@ -190,9 +327,14 @@ func (h *SolaraHandler) ImgProxy(c *gin.Context) {
 
 // statusForSourceError 把「调用方输入非法」和「上游失败」区分开：
 // 前者 400，后者 502。历史实现一律 502，会把客户端错误误导成上游故障。
+// errNeedVip 单独映射成 404：它的语义是「曲目存在但当前无播放权限」，
+// 前端据此提示「需会员」而不是报「服务异常」。
 func statusForSourceError(err error) int {
 	if errors.Is(err, errInvalidVideoID) {
 		return http.StatusBadRequest
+	}
+	if errors.Is(err, errNeedVip) {
+		return http.StatusNotFound
 	}
 	return http.StatusBadGateway
 }
@@ -227,8 +369,15 @@ func (h *SolaraHandler) proxyKuwoAudio(c *gin.Context, targetURL string) {
 	case hostInAllowlist(host, []string{".googlevideo.com"}):
 		referer = "https://www.youtube.com/"
 	default:
-		c.JSON(http.StatusForbidden, gin.H{"error": "target host not allowed"})
-		return
+		// QQ / 酷狗 CDN：域名白名单在 config 里扩展，Referer 交由各源自己的判定函数
+		if r, ok := qqMediaProxyReferer(host); ok {
+			referer = r
+		} else if r, ok := kugouMediaProxyReferer(host); ok {
+			referer = r
+		} else {
+			c.JSON(http.StatusForbidden, gin.H{"error": "target host not allowed"})
+			return
+		}
 	}
 	extraHeaders := map[string]string{
 		"Referer":    referer,

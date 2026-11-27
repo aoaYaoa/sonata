@@ -161,6 +161,9 @@ func (r *Router) SetupRoutes(engine *gin.Engine) {
 	{
 		discover.GET("/leaderboard", r.handlers.Solara.DiscoverLeaderboardList)
 		discover.GET("/leaderboard/:id", r.handlers.Solara.DiscoverLeaderboardDetail)
+		// 首页卡片按需补拼图：榜单列表只给前几张带 coverUrls，
+		// 其余卡片进入视口时才单独请求，避免首屏被几十次上游调用拖慢。
+		discover.GET("/leaderboard/:id/covers", r.handlers.Solara.DiscoverLeaderboardCovers)
 		discover.GET("/songlist", r.handlers.Solara.DiscoverSongList)
 		discover.GET("/songlist/:id", r.handlers.Solara.DiscoverSongListDetail)
 	}

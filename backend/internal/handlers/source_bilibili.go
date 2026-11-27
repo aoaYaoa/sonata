@@ -286,27 +286,39 @@ var bilibiliCategories = []struct {
 }
 
 func bilibiliLeaderboardList() ([]map[string]interface{}, error) {
-	// 从周榜API取第一个视频封面作为周榜分类封面
-	rankingCover := ""
+	// 周榜列表一次拿 100 条视频封面，按顺序分给各分类。
+	// 之前只有「音乐区周榜」有图、其余 8 个分类全空，音乐馆里一片渐变方块；
+	// 一个请求就能让每张卡都有真实封面，没有额外成本。
+	pics := make([]string, 0, len(bilibiliCategories))
 	data, err := fetchBilibili("https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=all")
 	if err == nil {
 		if dm, ok := data["data"].(map[string]interface{}); ok {
-			if list, ok := dm["list"].([]interface{}); ok && len(list) > 0 {
-				if first, ok := list[0].(map[string]interface{}); ok {
-					pic, _ := first["pic"].(string)
-					if pic != "" && !strings.HasPrefix(pic, "http") {
+			if list, ok := dm["list"].([]interface{}); ok {
+				for _, it := range list {
+					m, ok := it.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					pic, _ := m["pic"].(string)
+					if pic == "" {
+						continue
+					}
+					if !strings.HasPrefix(pic, "http") {
 						pic = "https:" + pic
 					}
-					rankingCover = pic
+					pics = append(pics, pic)
+					if len(pics) >= len(bilibiliCategories) {
+						break
+					}
 				}
 			}
 		}
 	}
 	result := make([]map[string]interface{}, 0, len(bilibiliCategories))
-	for _, cat := range bilibiliCategories {
+	for i, cat := range bilibiliCategories {
 		coverUrl := ""
-		if cat.id == "bili_ranking" {
-			coverUrl = rankingCover
+		if i < len(pics) {
+			coverUrl = pics[i]
 		}
 		result = append(result, map[string]interface{}{
 			"id":              cat.id,
@@ -320,7 +332,9 @@ func bilibiliLeaderboardList() ([]map[string]interface{}, error) {
 }
 
 func bilibiliSongList() ([]map[string]interface{}, error) {
-	// 用音乐区排行榜视频列表作为「歌单」
+	// 用音乐区排行榜视频列表作为「歌单」。
+	// 封面取榜首视频的图：之前这里是空字符串，发现页的「音乐区周榜」卡片
+	// 就一直是渐变块，而数据其实早就在同一次响应里。
 	apiURL := "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=all"
 	data, err := fetchBilibili(apiURL)
 	if err != nil {
@@ -330,12 +344,30 @@ func bilibiliSongList() ([]map[string]interface{}, error) {
 	if dataMap == nil {
 		return []map[string]interface{}{}, nil
 	}
+	cover := ""
+	if list, ok := dataMap["list"].([]interface{}); ok {
+		for _, it := range list {
+			m, ok := it.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			pic, _ := m["pic"].(string)
+			if pic == "" {
+				continue
+			}
+			if !strings.HasPrefix(pic, "http") {
+				pic = "https:" + pic
+			}
+			cover = pic
+			break
+		}
+	}
 	return []map[string]interface{}{
 		{
 			"id":          "bilibili_music_ranking",
 			"name":        "音乐区周榜",
 			"author":      "Bilibili",
-			"coverUrl":    "",
+			"coverUrl":    cover,
 			"playCount":   "",
 			"description": "B站音乐区本周最热视频",
 			"source":      "bilibili",
@@ -343,8 +375,11 @@ func bilibiliSongList() ([]map[string]interface{}, error) {
 	}, nil
 }
 
-func bilibiliLeaderboardDetail(limit int) ([]map[string]interface{}, error) {
-	return bilibiliLeaderboardDetailByID("bili_ranking", limit)
+func bilibiliLeaderboardDetail(
+	limit int,
+	offset int,
+) ([]map[string]interface{}, error) {
+	return bilibiliLeaderboardDetailByID("bili_ranking", limit, offset)
 }
 
 // bilibiliSearchCache 分类搜索缓存（30分钟）
@@ -359,21 +394,24 @@ var (
 	biliSearchCacheMu sync.Mutex
 )
 
-func bilibiliLeaderboardDetailByID(id string, limit int) ([]map[string]interface{}, error) {
+func bilibiliLeaderboardDetailByID(
+	id string,
+	limit int,
+	offset int,
+) ([]map[string]interface{}, error) {
 	// 周榜：直接用排行榜 API
 	if id == "bili_ranking" || id == "" {
-		return bilibiliRankingDetail(limit)
+		return bilibiliRankingDetail(limit, offset)
 	}
 
 	// 其他分类：全量搜索「音乐」，按分类关键词过滤标题
 	// 先查缓存
+	// 缓存里存的是整批搜索结果，按 offset/limit 切片返回，
+	// 这样翻页时才不会重复拿到同一批。
 	biliSearchCacheMu.Lock()
 	if entry, ok := biliSearchCache[id]; ok && time.Now().Before(entry.expiry) {
 		biliSearchCacheMu.Unlock()
-		if len(entry.results) > limit {
-			return entry.results[:limit], nil
-		}
-		return entry.results, nil
+		return slicePage(entry.results, offset, limit), nil
 	}
 	biliSearchCacheMu.Unlock()
 
@@ -386,9 +424,13 @@ func bilibiliLeaderboardDetailByID(id string, limit int) ([]map[string]interface
 		}
 	}
 
-	// 用分类专属关键词搜索
+	// 用分类专属关键词搜索。一次多取一些，缓存整批供翻页用。
 	h := &SolaraHandler{}
-	result, err := h.BilibiliSearch(searchKeyword, 1, limit)
+	batch := offset + limit
+	if batch < 60 {
+		batch = 60
+	}
+	result, err := h.BilibiliSearch(searchKeyword, 1, batch)
 	if err != nil {
 		return []map[string]interface{}{}, nil
 	}
@@ -397,10 +439,25 @@ func bilibiliLeaderboardDetailByID(id string, limit int) ([]map[string]interface
 	biliSearchCacheMu.Lock()
 	biliSearchCache[id] = biliSearchCacheEntry{results: result, expiry: time.Now().Add(30 * time.Minute)}
 	biliSearchCacheMu.Unlock()
-	return result, nil
+	return slicePage(result, offset, limit), nil
 }
 
-func bilibiliRankingDetail(limit int) ([]map[string]interface{}, error) {
+// slicePage 取 [offset, offset+limit) 段；越界返回空切片而不是 panic。
+func slicePage(items []map[string]interface{}, offset, limit int) []map[string]interface{} {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(items) {
+		return []map[string]interface{}{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[offset:end]
+}
+
+func bilibiliRankingDetail(limit, offset int) ([]map[string]interface{}, error) {
 	apiURL := "https://api.bilibili.com/x/web-interface/ranking/v2?rid=3&type=all"
 	data, err := fetchBilibili(apiURL)
 	if err != nil {
@@ -413,7 +470,10 @@ func bilibiliRankingDetail(limit int) ([]map[string]interface{}, error) {
 	list, _ := dataMap["list"].([]interface{})
 	result := make([]map[string]interface{}, 0)
 	for i, item := range list {
-		if i >= limit {
+		if i < offset {
+			continue
+		}
+		if len(result) >= limit {
 			break
 		}
 		m, ok := item.(map[string]interface{})

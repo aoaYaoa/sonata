@@ -115,18 +115,18 @@ func youtubeSongList() []map[string]interface{} {
 		{"6", "古典 Classical", "classical music", "https://i.ytimg.com/vi/jgpJVI3tDbY/hqdefault.jpg"},
 		{"7", "乡村 Country", "country music", "https://i.ytimg.com/vi/VuNIsY6JdUw/hqdefault.jpg"},
 		{"8", "R&B/灵魂 Soul", "r&b soul music", "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg"},
-		{"9", "雷鬼 Reggae", "reggae music", "https://i.ytimg.com/vi/CHekNnySAfM/hqdefault.jpg"},
-		{"10", "蓝调 Blues", "blues music", "https://i.ytimg.com/vi/0rEsVp5tiDQ/hqdefault.jpg"},
+		{"9", "雷鬼 Reggae", "reggae music", "https://i.ytimg.com/vi/hzqFmXZ8tOE/hqdefault.jpg"},
+		{"10", "蓝调 Blues", "blues music", "https://i.ytimg.com/vi/qiRiPtg9EFk/hqdefault.jpg"},
 		{"11", "金属 Metal", "metal music", "https://i.ytimg.com/vi/v2AC41dglnM/hqdefault.jpg"},
 		{"12", "朋克 Punk", "punk rock music", "https://i.ytimg.com/vi/z5rRZdiu1UE/hqdefault.jpg"},
 		{"13", "独立音乐 Indie", "indie music", "https://i.ytimg.com/vi/rVN1B-tUpgs/hqdefault.jpg"},
 		{"14", "放克 Funk", "funk music", "https://i.ytimg.com/vi/0CFuCYNx-1g/hqdefault.jpg"},
-		{"15", "迪斯科 Disco", "disco music", "https://i.ytimg.com/vi/h9nE2spOw_o/hqdefault.jpg"},
+		{"15", "迪斯科 Disco", "disco music", "https://i.ytimg.com/vi/TsuVAQkfCes/hqdefault.jpg"},
 		{"16", "K-Pop", "kpop music", "https://i.ytimg.com/vi/pSUydWEqKwE/hqdefault.jpg"},
 		{"17", "J-Pop", "jpop japanese music", "https://i.ytimg.com/vi/X9zw0QF12Kc/hqdefault.jpg"},
 		{"18", "拉丁 Latin", "latin music", "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg"},
 		{"19", "氛围音乐 Ambient", "ambient music", "https://i.ytimg.com/vi/M5QY2_8704o/hqdefault.jpg"},
-		{"20", "Lo-Fi", "lofi hip hop music", "https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg"},
+		{"20", "Lo-Fi", "lofi hip hop music", "https://i.ytimg.com/vi/n61ULEU7CO0/hqdefault.jpg"},
 	}
 
 	result := make([]map[string]interface{}, 0, len(categories))
@@ -146,7 +146,11 @@ func youtubeSongList() []map[string]interface{} {
 
 // youtubeSongListDetail 获取 YouTube 歌单详情（通过分类 ID 搜索）
 
-func youtubeSongListDetail(categoryID string, limit int) ([]map[string]interface{}, error) {
+func youtubeSongListDetail(
+	categoryID string,
+	limit int,
+	offset int,
+) ([]map[string]interface{}, error) {
 	categoryMap := map[string]string{
 		"1":  "pop music hits",
 		"2":  "rock music",
@@ -175,10 +179,24 @@ func youtubeSongListDetail(categoryID string, limit int) ([]map[string]interface
 		keyword = "pop music hits" // 默认
 	}
 
-	return youtubeSearch(keyword, limit)
+	// yt-dlp 一次只能搜一批，翻页靠多取再切片：offset 越大取越多，
+	// 上限 3 倍以免每次翻页都去抓上百条。
+	batch := offset + limit
+	if batch > limit*3 {
+		batch = limit * 3
+	}
+	items, err := youtubeSearchPage(keyword, batch)
+	if err != nil {
+		return nil, err
+	}
+	return slicePage(items, offset, limit), nil
 }
 
 func youtubeSearch(keyword string, limit int) ([]map[string]interface{}, error) {
+	return youtubeSearchPage(keyword, limit)
+}
+
+func youtubeSearchPage(keyword string, limit int) ([]map[string]interface{}, error) {
 	// 检查搜索缓存（缓存30分钟）
 	cacheKey := fmt.Sprintf("%s:%d", keyword, limit)
 	ytSearchCacheMu.Lock()
