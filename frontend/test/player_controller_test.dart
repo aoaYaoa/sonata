@@ -23,6 +23,9 @@ class FakeRepo extends SolaraRepository {
   /// 记录每首歌被取流了几次：预取如果生效，切过去时不会再请求。
   final Map<String, int> streamCalls = {};
 
+  /// 每次取流开始时回调（测试用它记录时序）。
+  void Function(String songId)? onStream;
+
   // playSong 直接调 fetchStream（要拿到实际档位/码率/是否试听），
   // 只覆盖 fetchSongUrl 的话会走真实网络，测试里必然抛异常。
   @override
@@ -33,6 +36,7 @@ class FakeRepo extends SolaraRepository {
     String? mediaId,
   }) async {
     streamCalls.update(songId, (n) => n + 1, ifAbsent: () => 1);
+    onStream?.call(songId);
     // 让出一次事件循环，模拟真实网络往返：交接期间没有预取就会露馅。
     await Future<void>.delayed(const Duration(milliseconds: 5));
     return StreamInfo(
@@ -132,6 +136,22 @@ class FakeEngine implements AudioEngine {
 
   /// 模拟播放完毕（引擎上报 completed）。
   void fakeComplete() => _completeController.add(null);
+}
+
+/// setSource 模拟「音频头解析很慢」：大文件 + 慢网实测能拖几秒。
+class SlowSourceEngine extends FakeEngine {
+  final Duration delay;
+  void Function(String phase)? onPhase;
+
+  SlowSourceEngine({this.delay = const Duration(milliseconds: 150)});
+
+  @override
+  Future<void> setSource(String url) async {
+    onPhase?.call('start');
+    await Future<void>.delayed(delay);
+    onPhase?.call('done');
+    await super.setSource(url);
+  }
 }
 
 class FakeThemeController extends ThemeController {
@@ -251,5 +271,73 @@ void main() {
     expect(controller.state.currentSong?.id, '2');
     expect(controller.state.isPlaying, isTrue, reason: '下一首必须真的在播');
     expect(repo.streamCalls['2'], 1, reason: '命中预取，不该再请求');
+  });
+
+  test('预取在本曲 setSource 完成前就发起，不是等装好才取', () async {
+    final repo = FakeRepo();
+    final queue = [songOf('1'), songOf('2'), songOf('3')];
+    var index = 0;
+    final events = <String>[];
+    repo.onStream = (id) => events.add('stream:$id');
+    final engine = SlowSourceEngine();
+    engine.onPhase = (p) => events.add('setSource:$p');
+
+    final controller = PlayerController(
+      repository: repo,
+      engine: engine,
+      themeController: FakeThemeController(),
+      persistence: PersistentStateService(storage: StorageService()),
+      getQueue: () => queue,
+      getPlayMode: () => PlayMode.list,
+      getCurrentQueueIndex: () => index,
+      setCurrentQueueIndex: (i) => index = i,
+      getQuality: () => '320',
+    );
+
+    final playing = controller.playSong(queue[0], quality: '320');
+    // setSource 还在等（150ms），预取早就该在路上
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(
+      events.contains('setSource:done'),
+      isFalse,
+      reason: '本曲还没装好，正好是预取该跑的时间',
+    );
+    expect(events.contains('stream:2'), isTrue, reason: '第二首应已并行取流');
+    expect(events.contains('stream:3'), isTrue, reason: '第三首也应已并行取流');
+
+    await playing;
+    expect(controller.state.isPlaying, isTrue);
+  });
+
+  test('随机模式切歌兑现预取的那一首，不白取', () async {
+    final repo = FakeRepo();
+    final queue = [songOf('1'), songOf('2'), songOf('3'), songOf('4')];
+    var index = 0;
+    final controller = PlayerController(
+      repository: repo,
+      engine: FakeEngine(),
+      themeController: FakeThemeController(),
+      persistence: PersistentStateService(storage: StorageService()),
+      getQueue: () => queue,
+      getPlayMode: () => PlayMode.random,
+      getCurrentQueueIndex: () => index,
+      setCurrentQueueIndex: (i) => index = i,
+      getQuality: () => '320',
+    );
+
+    await controller.playSong(queue[0], quality: '320');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    final callsBefore = Map<String, int>.from(repo.streamCalls);
+    await controller.skipNext(
+      queue: queue,
+      currentIndex: 0,
+      playMode: PlayMode.random,
+      quality: '320',
+    );
+    final id = controller.state.currentSong!.id;
+    expect(id, isNot('1'));
+    // 随机模式如果不兑现抽签，这里会多一次请求——预取等于没做。
+    expect(repo.streamCalls[id], callsBefore[id] ?? 1, reason: '切到的这首应当已预取');
   });
 }

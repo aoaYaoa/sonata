@@ -56,6 +56,19 @@ class PlayerController extends StateNotifier<PlayerState> {
 
   /// 缓存上限，防止连续切歌把内存堆满。
   static const int _preloadMaxEntries = 8;
+
+  /// 距结尾还剩多久时做一次「直链是否快过期」的确认。
+  static const Duration _preloadRefreshWindow = Duration(seconds: 30);
+
+  /// 已经补取过的歌（`source:id`），保证每首歌只补一次。
+  String? _refreshedForSong;
+
+  /// 随机模式下「已经预取好的下一首」。
+  ///
+  /// 顺序模式里下一首是确定的，预取哪首就播哪首。随机模式如果不记住这次抽到
+  /// 的是哪一首，预取 A 却抽到 B，那张直链就白取了——预取在随机模式下等于没做。
+  /// 所以这里先抽签、预取、切歌时优先兑现这张签。
+  int? _plannedRandomNext;
   Duration? _restoredPosition;
   int _tickCount = 0;
 
@@ -154,6 +167,10 @@ class PlayerController extends StateNotifier<PlayerState> {
         currentLyricIndex: currentIndex,
       );
     }
+    // 临近结尾补一次预取：直链是带时效的签名，一首十几分钟的歌播下来，
+    // 开头取的那张可能已经过期。这里只看「快过期了没有」，没过期什么都不做。
+    _refreshSoonExpiringPreload(duration ?? Duration.zero);
+
     // 每10次tick（约5秒）自动保存播放进度，应对划掉app没暂停的情况
     _tickCount++;
     if (_tickCount >= 10 && state.isPlaying && state.currentSong != null) {
@@ -271,6 +288,8 @@ class PlayerController extends StateNotifier<PlayerState> {
     _isLoading = true;
     // 任何一次主动加载都让上一轮「播完自动交接」作废
     _advanceGeneration++;
+    // 上一轮抽的「下一首」也作废：本次 playSong 会重新预取并重新抽签。
+    _plannedRandomNext = null;
     // 保留旧封面，切歌过渡期间用于锁屏/灵动岛显示
     final previousArtworkUrl = state.artworkUrl;
 
@@ -296,6 +315,20 @@ class PlayerController extends StateNotifier<PlayerState> {
     if (songIndex >= 0) {
       setCurrentQueueIndex?.call(songIndex);
     }
+
+    // 预取必须在这里发起，和本曲的取流并行跑。
+    //
+    // 之前放在 playSong 尾部（`await engine.setSource(url)` 之后），那一步要等
+    // 音频头解析完才算「装好」——慢网 + 大文件（50MB 的 FLAC）能拖几秒。
+    // 那几秒正好是预取该跑的时间，浪费掉了就等于「临播才去取」。
+    // 放到这里之后，两首的直链和本曲的直链同时在路上，歌还没唱几秒就已经备齐了。
+    _preloadUpcoming(
+      queue: queue,
+      currentIndex:
+          songIndex >= 0 ? songIndex : (getCurrentQueueIndex?.call() ?? 0),
+      playMode: getPlayMode?.call() ?? PlayMode.list,
+      quality: quality,
+    );
 
     // 立即计算封面 URL（无需网络请求）
     String? immediateArtworkUrl;
@@ -445,14 +478,6 @@ class PlayerController extends StateNotifier<PlayerState> {
       unawaited(Future.wait([lyricFuture, artworkFuture]));
 
       onSongPlayed?.call(song);
-
-      // 播放已经起来了，再去预取后面的歌：串行做的话首响会被拖慢。
-      _preloadUpcoming(
-        queue: queue,
-        currentIndex: getCurrentQueueIndex?.call() ?? 0,
-        playMode: getPlayMode?.call() ?? PlayMode.list,
-        quality: quality,
-      );
     } catch (e, st) {
       _isLoading = false;
       _isSwitching = false;
@@ -518,6 +543,16 @@ class PlayerController extends StateNotifier<PlayerState> {
     return entry.info;
   }
 
+  /// 在 queue 里抽一个不是 [currentIndex] 的随机下标。
+  int _pickRandomIndex(int length, int currentIndex) {
+    if (length <= 1) return 0;
+    int index;
+    do {
+      index = _random.nextInt(length);
+    } while (index == currentIndex);
+    return index;
+  }
+
   /// 预取当前曲后面的 [_preloadAhead] 首。
   ///
   /// 为什么不是「等播完再去取」：后端要串行打上游接口（网易云/QQ/酷狗），
@@ -531,6 +566,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     required int currentIndex,
     required PlayMode playMode,
     required String quality,
+    bool forceRefresh = false,
   }) {
     if (queue.isEmpty) return;
     // 单曲循环永远重播同一首，预取后面没有意义。
@@ -542,7 +578,14 @@ class PlayerController extends StateNotifier<PlayerState> {
     for (var step = 1; step <= _preloadAhead; step++) {
       if (playMode == PlayMode.random) {
         if (queue.length <= 1) return;
-        index = _random.nextInt(queue.length);
+        if (step == 1) {
+          // 抽签并记住，切歌时兑现这一张。
+          _plannedRandomNext = _pickRandomIndex(queue.length, currentIndex);
+          index = _plannedRandomNext!;
+        } else {
+          // 第二首只是顺带热身，抽到哪算哪。
+          index = _pickRandomIndex(queue.length, currentIndex);
+        }
       } else {
         index = (index + 1) % queue.length;
       }
@@ -555,7 +598,12 @@ class PlayerController extends StateNotifier<PlayerState> {
       }
       final plan = _resolveStreamPlan(song, quality);
       final key = _preloadKey(song, plan.quality, plan.mediaId);
-      if (_preload.containsKey(key) || _preloadInFlight.contains(key)) continue;
+      if (_preloadInFlight.contains(key)) continue;
+      if (_preload.containsKey(key)) {
+        // 已有一份：除非明确要求刷新，否则不动它。
+        if (!forceRefresh) continue;
+        _preload.remove(key);
+      }
 
       _preloadInFlight.add(key);
       DebugLogBus.add('[PlayerController] 预取 ${song.name}');
@@ -576,6 +624,41 @@ class PlayerController extends StateNotifier<PlayerState> {
           })
           .whenComplete(() => _preloadInFlight.remove(key));
     }
+  }
+
+  /// 剩余不到 [_preloadRefreshWindow] 时，把「下一首」的预取重新取一遍。
+  ///
+  /// 只在这一刻补取，是有原因的：预取是在本曲**开始**时发起的（那才是它有意义
+  /// 的位置——和本曲取流并行，整首歌的时间都是余量）。但直链是签名 URL，
+  /// 有效期通常十几分钟；一首超长曲目或用户中途暂停很久之后，那张 URL 可能已经
+  /// 失效。所以在真正需要它之前的一小段窗口里确认一次：快过期就换新的，
+  /// 没过期就什么都不做（`_preloadTtl` 的一半作为新鲜度门槛）。
+  void _refreshSoonExpiringPreload(Duration duration) {
+    if (!state.isPlaying) return;
+    if (duration <= Duration.zero) return;
+    final remaining = duration - state.position;
+    if (remaining > _preloadRefreshWindow) return;
+    // 每首歌只补一次，避免最后 30 秒里每个 tick 都打一次后端。
+    final song = state.currentSong;
+    if (song == null || _refreshedForSong == '${song.source}:${song.id}') {
+      return;
+    }
+
+    final queue = getQueue?.call() ?? [];
+    if (queue.isEmpty) return;
+    final freshAfter = _preloadTtl ~/ 2;
+    // 只有「确实快要过期」才重取；刚取回来的不动。
+    for (final entry in _preload.values) {
+      if (DateTime.now().difference(entry.at) < freshAfter) return;
+    }
+    _refreshedForSong = '${song.source}:${song.id}';
+    _preloadUpcoming(
+      queue: queue,
+      currentIndex: getCurrentQueueIndex?.call() ?? 0,
+      playMode: getPlayMode?.call() ?? PlayMode.list,
+      quality: getQuality?.call() ?? 'auto',
+      forceRefresh: true,
+    );
   }
 
   /// 丢掉过期条目与超出上限最旧的那批。
@@ -726,13 +809,19 @@ class PlayerController extends StateNotifier<PlayerState> {
     if (queue.isEmpty) return;
     int nextIndex;
     if (playMode == PlayMode.random) {
+      final planned = _plannedRandomNext;
       if (queue.length <= 1) {
         nextIndex = 0;
+      } else if (planned != null &&
+          planned >= 0 &&
+          planned < queue.length &&
+          planned != currentIndex) {
+        // 兑现预取时抽的那张签，直链已经在手。
+        nextIndex = planned;
       } else {
-        do {
-          nextIndex = _random.nextInt(queue.length);
-        } while (nextIndex == currentIndex);
+        nextIndex = _pickRandomIndex(queue.length, currentIndex);
       }
+      _plannedRandomNext = null;
     } else {
       nextIndex = (currentIndex + 1) % queue.length;
     }
