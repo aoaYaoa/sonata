@@ -22,16 +22,25 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
 
   bool _isSwitching = false;
 
-  /// 切歌时调用，防止 completed 状态触发系统关闭灵动岛/锁屏
+  /// 保持自动切歌期间的媒体会话。
   void beginSwitching() => _isSwitching = true;
-  void endSwitching() => _isSwitching = false;
+
+  void endSwitching() {
+    if (!_isSwitching) return;
+    _isSwitching = false;
+    _broadcastState();
+  }
 
   void _broadcastState() {
     final playing = _player.playing;
     final rawState = _player.processingState;
-    // 切歌过渡期间，不向系统广播 completed，避免灵动岛/锁屏被关闭
+    final isSourceTransition =
+        _isSwitching &&
+        playing &&
+        (rawState == ProcessingState.completed ||
+            rawState == ProcessingState.idle);
     final mappedState =
-        (_isSwitching && rawState == ProcessingState.completed)
+        isSourceTransition
             ? AudioProcessingState.loading
             : _mapProcessingState(rawState);
     playbackState.add(

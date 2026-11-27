@@ -107,20 +107,21 @@ class PlayerController extends StateNotifier<PlayerState> {
 
   /// 播完 → 切下一首。
   ///
-  /// 这里**不 pause、不 seek(0)**，只有一个动作：把下一首装上。
-  ///
-  /// 踩过的两个坑都记在这：
-  ///  - 原来 completion 里立刻 `seek(Duration.zero)`：completed 状态下 just_audio
-  ///    的 `playing` 仍是 true，回零等于让上一首从头再唱，等下一首的流取回来
-  ///    （冷启动 600ms~2s）才切走，就是「这首歌重播了几秒才跳走」。
-  ///  - 改成「先 pause 再 seek」之后：音频早就播完，pause 没有东西可静音，反而
-  ///    让 audio_service 上报 `playing: false`，iOS 顺势把 AVAudioSession 停掉，
-  ///    下一首 `setSource` 装好了却不出声——「加载完直接不播放，声音直接断了」。
-  ///
-  /// 正确的做法是什么都不做：completed 状态下本来就没有音频在响，直接换源即可。
-  /// `setSource` 本身就会让引擎离开 completed；`_isSwitching` 负责在交接窗口里
-  /// 不向系统广播 completed，灵动岛/锁屏因此不会被关掉。
+  /// 顺序是「先 pause（**不 seek**）→ 再换源 → 最后 play」，三个动作各治一个坑：
+  ///  1. 不 pause：just_audio 自然播完时不会把 `playing` 置回 false，而 `play()`
+  ///     第一行就是 `if (playing) return;`。标志还是 true 时下一首的 play() 直接
+  ///     早退——既不给原生发 play，也不会 `audioSession.setActive(true)` 激活
+  ///     AVAudioSession。会话没激活，音频装好了也一声不响，就是「断了」。
+  ///  2. seek(0)：completed 状态下回零等于让上一首从头再唱，还要等下一首的流
+  ///     回来（冷启动 600ms~2s）才切走 →「重播几秒才跳走」。
+  ///  3. 只 pause：音频早已结束，没有声音被截断；`_playing` 归零后 setSource 的
+  ///     load 不会自动设 rate，play() 才真的执行一次（激活会话 + 发 play）。
   Future<void> _advanceAfterComplete(int generation) async {
+    try {
+      await engine.pause();
+    } catch (e) {
+      DebugLogBus.add('[PlayerController] 交接前暂停失败: $e');
+    }
     // 用户已经手动切过歌了：这次自动交接作废。
     if (generation != _advanceGeneration) return;
     final queue = getQueue?.call() ?? [];
@@ -373,8 +374,15 @@ class PlayerController extends StateNotifier<PlayerState> {
         actualBitrate = resolved.bitrate;
         isPreview = resolved.preview;
       }
+      DebugLogBus.add(
+        '[PlayerController] 准备播放 ${song.name} '
+        '($song.source) quality=$actualQuality preview=$isPreview',
+      );
       try {
         await engine.setSource(url);
+        DebugLogBus.add(
+          '[PlayerController] setSource ok, duration=${engine.duration}',
+        );
       } catch (e) {
         // 预取直链是带时效的签名，放久了会 403；这里退回现场重取一次。
         // 只有非本地/非 Jamendo 直链才有「重取」这回事。
@@ -481,6 +489,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     } catch (e, st) {
       _isLoading = false;
       _isSwitching = false;
+      nowPlayingHandler?.endSwitching();
       DebugLogBus.add('[PlayerController] playSong error: $e\n$st');
       state = state.copyWith(error: e.toString(), isPlaying: false);
     }

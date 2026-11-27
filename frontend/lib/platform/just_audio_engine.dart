@@ -25,6 +25,17 @@ class JustAudioEngine implements AudioEngine {
 
   @override
   Future<void> play() async {
+    // 上一首自然播完时，just_audio 的 `playing` 标志不会归零（Dart 侧仍是 true，
+    // 原生 `_playing` 也是 YES）。这时再调 `play()` 会被它当成重复请求直接早退：
+    //   - 不给原生发 play 指令；
+    //   - 更关键的是不会走 `audioSession.setActive(true)` 去激活 AVAudioSession。
+    // 会话一旦被系统停掉，下一首就算装好也一声不响——就是「断了」。
+    //
+    // 先 pause 一次把标志归位（pause 不会停会话，只有 stop() 才会），再 play，
+    // 这次才是真正的一次「开始播放」：重新激活会话 + 给原生发 play。
+    if (_player.playing) {
+      await _player.pause();
+    }
     await _player.play();
   }
 

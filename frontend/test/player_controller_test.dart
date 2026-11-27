@@ -236,7 +236,7 @@ void main() {
     expect(controller.state.currentSong?.id, '2');
   });
 
-  test('播完不 pause 也不 seek，直接装下一首', () async {
+  test('播完只 pause 不 seek，再装下一首', () async {
     final repo = FakeRepo();
     final queue = [songOf('1'), songOf('2')];
     var index = 0;
@@ -260,13 +260,18 @@ void main() {
     engine.fakeComplete();
     await Future<void>.delayed(const Duration(milliseconds: 80));
 
-    // 这两条是踩过的坑，别再走回去：
+    // 三条踩过的坑，别再走回去：
     //  - 播完就 seek(0)：completed 时 playing 仍为 true，上一首从头再唱，
     //    要等下一首的流回来才切走 →「重播几秒才跳走」；
-    //  - 先 pause 再 seek：pause 让 audio_service 上报 playing:false，
-    //    iOS 顺势停掉音频会话，下一首装好了但没声音 →「加载完不播放」。
-    expect(engine.calls.contains('pause'), isFalse);
-    expect(engine.calls.contains('seek'), isFalse);
+    //  - 播完什么都不做：playing 标志不归零，下一首的 play() 被 just_audio
+    //    当成重复请求早退，AVAudioSession 不激活 →「加载完不出声、断了」；
+    //  - 所以必须 pause（归位 playing），但绝不能 seek。
+    expect(
+      engine.calls.contains('pause'),
+      isTrue,
+      reason: '要靠 pause 把 playing 归零',
+    );
+    expect(engine.calls.contains('seek'), isFalse, reason: 'seek 是「重播几秒」的元凶');
 
     expect(controller.state.currentSong?.id, '2');
     expect(controller.state.isPlaying, isTrue, reason: '下一首必须真的在播');
