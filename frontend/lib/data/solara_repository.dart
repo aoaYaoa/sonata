@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../domain/models/discover.dart';
 import '../domain/models/song.dart';
+import '../domain/models/stream_info.dart';
 import 'api/solara_api.dart';
 import '../services/debug_log_bus.dart';
 
@@ -57,30 +58,66 @@ class SolaraRepository {
         .toList();
   }
 
+  /// 取播放地址与实际音质。
+  ///
+  /// 返回的 StreamInfo 里带着后端实测拿到的档位/码率/格式，
+  /// 调用方必须用它显示音质、决定文件后缀、判断是不是试听片段。
+  Future<StreamInfo> fetchStream({
+    required String songId,
+    required String source,
+    required String quality,
+    String? mediaId,
+  }) async {
+    final uri = _resolve(
+      api.buildSongUrlUri(
+        songId: songId,
+        source: source,
+        quality: quality,
+        mediaId: mediaId,
+      ),
+    );
+    DebugLogBus.add(
+      'Fetch stream: $songId ($source) quality=$quality mid=$mediaId',
+    );
+    final response = await dio.getUri(uri);
+    _ensureAuthed(response);
+    final data = response.data;
+
+    // 新接口回 {url, quality, bitrate, ext, size, preview}；
+    // 老的透传接口（bilibili/jamendo）仍可能只给 {url} 或裸字符串。
+    if (data is Map && data['url'] != null) {
+      final info = StreamInfo.fromJson(data);
+      DebugLogBus.add(
+        'Stream: ${info.quality} ${info.bitrate}bps ${info.ext} preview=${info.preview}',
+      );
+      return info;
+    }
+    if (data is List &&
+        data.isNotEmpty &&
+        data[0] is Map &&
+        data[0]['url'] != null) {
+      return StreamInfo.fromJson(data[0] as Map);
+    }
+    if (data is String && data.startsWith('http')) {
+      return StreamInfo.fromUrl(data);
+    }
+    throw Exception('Invalid stream response: $data');
+  }
+
+  /// 只取播放地址。播放器不需要音质信息的地方用它。
   Future<String> fetchSongUrl({
     required String songId,
     required String source,
     required String quality,
+    String? mediaId,
   }) async {
-    final uri = _resolve(
-      api.buildSongUrlUri(songId: songId, source: source, quality: quality),
+    final info = await fetchStream(
+      songId: songId,
+      source: source,
+      quality: quality,
+      mediaId: mediaId,
     );
-    DebugLogBus.add('Fetch song url: $songId');
-    final response = await dio.getUri(uri);
-    _ensureAuthed(response);
-    final data = response.data;
-    DebugLogBus.add('Song url response: status=${response.statusCode} data=$data');
-    // API 可能返回 {url: ...} 或 [{url: ...}] 或直接字符串
-    if (data is Map && data['url'] != null) {
-      return data['url'].toString();
-    }
-    if (data is List && data.isNotEmpty && data[0] is Map && data[0]['url'] != null) {
-      return data[0]['url'].toString();
-    }
-    if (data is String && data.startsWith('http')) {
-      return data;
-    }
-    throw Exception('Invalid song url response: $data');
+    return info.url;
   }
 
   Future<String> fetchLyric({
@@ -146,10 +183,18 @@ class SolaraRepository {
     throw Exception('Invalid mv url response: \$data');
   }
 
+  /// [onlyAvailable] 为 true 时后端会先剔掉详情页取不到歌的空榜单
+  /// （「查看全部榜单」页用；首页照旧不过滤，免得首屏等探测）。
   Future<List<LeaderboardItem>> fetchLeaderboardList({
     required String source,
+    bool onlyAvailable = false,
   }) async {
-    final uri = _resolve(api.buildDiscoverLeaderboardListUri(source: source));
+    final uri = _resolve(
+      api.buildDiscoverLeaderboardListUri(
+        source: source,
+        onlyAvailable: onlyAvailable,
+      ),
+    );
     DebugLogBus.add('Fetch leaderboard list: $source');
     final response = await dio.getUri(uri);
     _ensureAuthed(response);
@@ -159,6 +204,32 @@ class SolaraRepository {
         .map(
           (e) => LeaderboardItem.fromJson(Map<String, dynamic>.from(e as Map)),
         )
+        .toList();
+  }
+
+  /// 按需取某个榜单的拼图封面（前 4 首歌的专辑图）。
+  ///
+  /// 首页列表只为前几张卡带 coverUrls，其余卡片滚到视口时再单独要，
+  /// 这样首屏不用等几十次上游调用，而每张卡最终都有图。
+  Future<List<String>> fetchLeaderboardCovers({
+    required String id,
+    required String source,
+  }) async {
+    final uri = _resolve(
+      Uri(
+        path: '/api/discover/leaderboard/${Uri.encodeComponent(id)}/covers',
+        queryParameters: {'source': source},
+      ),
+    );
+    final response = await dio.getUri(uri);
+    _ensureAuthed(response);
+    final data = response.data;
+    if (data is! Map) return const [];
+    final raw = data['coverUrls'];
+    if (raw is! List) return const [];
+    return raw
+        .map((e) => e?.toString() ?? '')
+        .where((s) => s.isNotEmpty)
         .toList();
   }
 

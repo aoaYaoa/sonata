@@ -39,7 +39,8 @@ class FavoritesState {
 class FavoritesStateNotifier extends StateNotifier<FavoritesState> {
   final PersistentStateService persistence;
 
-  FavoritesStateNotifier({required this.persistence}) : super(FavoritesState.initial()) {
+  FavoritesStateNotifier({required this.persistence})
+    : super(FavoritesState.initial()) {
     persistence.loadFavorites(this);
   }
 
@@ -55,7 +56,10 @@ class FavoritesStateNotifier extends StateNotifier<FavoritesState> {
     } else {
       updated.add(song);
     }
-    final nextIndex = state.currentIndex.clamp(0, updated.isEmpty ? 0 : updated.length - 1);
+    final nextIndex = state.currentIndex.clamp(
+      0,
+      updated.isEmpty ? 0 : updated.length - 1,
+    );
     state = state.copyWith(favorites: updated, currentIndex: nextIndex);
     persistence.saveFavorites(state);
   }
@@ -70,6 +74,9 @@ class FavoritesStateNotifier extends StateNotifier<FavoritesState> {
   }
 }
 
-final favoritesStateProvider = StateNotifierProvider<FavoritesStateNotifier, FavoritesState>(
-  (ref) => FavoritesStateNotifier(persistence: ref.watch(persistentStateProvider)),
-);
+final favoritesStateProvider =
+    StateNotifierProvider<FavoritesStateNotifier, FavoritesState>(
+      (ref) => FavoritesStateNotifier(
+        persistence: ref.watch(persistentStateProvider),
+      ),
+    );

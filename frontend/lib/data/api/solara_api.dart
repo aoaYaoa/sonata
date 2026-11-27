@@ -31,32 +31,20 @@ class SolaraApi {
     required String songId,
     required String source,
     required String quality,
+    String? mediaId,
   }) {
-    // 把非数字的品质标识转成比特率数字
-    final br = _normalizeBitrate(quality);
-    return _buildProxyUri({
+    final params = <String, String>{
       'types': 'url',
       'id': songId,
       'source': source,
-      'br': br,
-    });
-  }
-
-  static String _normalizeBitrate(String quality) {
-    switch (quality.toUpperCase()) {
-      case 'FLAC':
-      case 'LOSSLESS':
-        return '999000';
-      case 'HQ':
-        return '320';
-      case 'SQ':
-        return '192';
-      case 'LQ':
-        return '128';
-      default:
-        // 已经是数字字符串则直接返回
-        return quality;
+      'br': quality,
+    };
+    // mid 是「档位标识」：酷狗换档要换 hash，QQ 要 media_mid，都从这里传。
+    // 不传时后端会自己按 id 反查，多一次上游往返。
+    if (mediaId != null && mediaId.isNotEmpty) {
+      params['mid'] = mediaId;
     }
+    return _buildProxyUri(params);
   }
 
   Uri buildLyricUri({required String songId, required String source}) {
@@ -93,10 +81,13 @@ class SolaraApi {
     return _buildProxyUri({'types': 'mv', 'id': mvId, 'source': source});
   }
 
-  Uri buildDiscoverLeaderboardListUri({required String source}) {
+  Uri buildDiscoverLeaderboardListUri({
+    required String source,
+    bool onlyAvailable = false,
+  }) {
     return Uri(
       path: '/api/discover/leaderboard',
-      queryParameters: {'source': source},
+      queryParameters: {'source': source, if (onlyAvailable) 'available': '1'},
     );
   }
 

@@ -14,6 +14,12 @@ class SearchState {
   final List<Song> results;
   final List<String> history; // 搜索历史词，最新在前
 
+  /// 这次会话里是否真的搜过。
+  ///
+  /// 用来区分「还没搜」和「搜了但一条没有」：只看 `results.isEmpty` 的话，
+  /// 搜不到结果时浮层会整个消失，用户看到的是首页，会以为点击没生效。
+  final bool searched;
+
   const SearchState({
     required this.keyword,
     required this.source,
@@ -23,6 +29,7 @@ class SearchState {
     required this.error,
     required this.results,
     this.history = const [],
+    this.searched = false,
   });
 
   SearchState copyWith({
@@ -34,6 +41,7 @@ class SearchState {
     String? error,
     List<Song>? results,
     List<String>? history,
+    bool? searched,
   }) {
     return SearchState(
       keyword: keyword ?? this.keyword,
@@ -44,6 +52,7 @@ class SearchState {
       error: error,
       results: results ?? this.results,
       history: history ?? this.history,
+      searched: searched ?? this.searched,
     );
   }
 
@@ -85,7 +94,9 @@ class SearchStateNotifier extends StateNotifier<SearchState> {
   }
 
   void removeHistory(String keyword) {
-    state = state.copyWith(history: state.history.where((h) => h != keyword).toList());
+    state = state.copyWith(
+      history: state.history.where((h) => h != keyword).toList(),
+    );
     _onHistoryChanged?.call(state.history);
   }
 
@@ -102,18 +113,22 @@ class SearchStateNotifier extends StateNotifier<SearchState> {
       error: null,
       keyword: keyword,
       page: 1,
+      searched: true,
     );
     try {
+      const pageSize = 20;
       final results = await repository.search(
         keyword: keyword,
         source: state.source,
-        count: 20,
+        count: pageSize,
         page: 1,
       );
       state = state.copyWith(
         loading: false,
         results: results,
-        hasMore: results.isNotEmpty,
+        // 只有「拿满了」才认为还有下一页：原来写 results.isNotEmpty，
+        // 最后一页（返回 3 条）之后还会再多打一次空请求。
+        hasMore: results.length >= pageSize,
       );
     } catch (e) {
       state = state.copyWith(loading: false, error: e.toString());
@@ -125,17 +140,18 @@ class SearchStateNotifier extends StateNotifier<SearchState> {
     final nextPage = state.page + 1;
     state = state.copyWith(loading: true, error: null);
     try {
+      const pageSize = 20;
       final results = await repository.search(
         keyword: state.keyword,
         source: state.source,
-        count: 20,
+        count: pageSize,
         page: nextPage,
       );
       state = state.copyWith(
         loading: false,
         page: nextPage,
         results: [...state.results, ...results],
-        hasMore: results.isNotEmpty,
+        hasMore: results.length >= pageSize,
       );
     } catch (e) {
       state = state.copyWith(loading: false, error: e.toString());
@@ -147,7 +163,10 @@ class SearchStateNotifier extends StateNotifier<SearchState> {
   }
 
   void clearResults() {
-    state = SearchState.initial().copyWith(source: state.source, history: state.history);
+    state = SearchState.initial().copyWith(
+      source: state.source,
+      history: state.history,
+    );
   }
 }
 
@@ -159,6 +178,8 @@ final searchStateProvider =
       // 持久化搜索历史
       final persistence = ref.read(persistentStateProvider);
       persistence.loadSearchHistory(notifier);
-      notifier.setOnHistoryChanged((history) => persistence.saveSearchHistory(history));
+      notifier.setOnHistoryChanged(
+        (history) => persistence.saveSearchHistory(history),
+      );
       return notifier;
     });

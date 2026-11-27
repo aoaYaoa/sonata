@@ -9,7 +9,7 @@ class SettingsState {
   final String discoverSource; // 发现页独立音源
   final bool debugMode;
   final String themeMode; // 'system', 'light', 'dark'
-  final String eqPreset;  // EQ preset id, default 'flat'
+  final String eqPreset; // EQ preset id, default 'flat'
   final double playbackSpeed; // 播放速度，默认 1.0
 
   const SettingsState({
@@ -47,7 +47,9 @@ class SettingsState {
 
   static SettingsState initial() {
     return const SettingsState(
-      playbackQuality: '320',
+      // auto 让各音源给到自身能力上限：酷狗能到真无损、QQ 匿名态给 128k。
+      // 固定 320 的老默认值在 QQ 上永远拿不到，反而误导用户。
+      playbackQuality: 'auto',
       volume: 1.0,
       searchSource: 'netease',
       discoverSource: 'netease',
@@ -62,7 +64,8 @@ class SettingsState {
 class SettingsStateNotifier extends StateNotifier<SettingsState> {
   final PersistentStateService persistence;
 
-  SettingsStateNotifier({required this.persistence}) : super(SettingsState.initial()) {
+  SettingsStateNotifier({required this.persistence})
+    : super(SettingsState.initial()) {
     persistence.loadSettings(this);
   }
 
@@ -107,6 +110,9 @@ class SettingsStateNotifier extends StateNotifier<SettingsState> {
   }
 }
 
-final settingsStateProvider = StateNotifierProvider<SettingsStateNotifier, SettingsState>(
-  (ref) => SettingsStateNotifier(persistence: ref.watch(persistentStateProvider)),
-);
+final settingsStateProvider =
+    StateNotifierProvider<SettingsStateNotifier, SettingsState>(
+      (ref) => SettingsStateNotifier(
+        persistence: ref.watch(persistentStateProvider),
+      ),
+    );

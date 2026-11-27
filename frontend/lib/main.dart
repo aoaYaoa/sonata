@@ -49,13 +49,15 @@ void main() async {
   }
 
   // 限制图片缓存，防止 iOS 内存压力导致闪退
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 50 * 1024 * 1024; // 50MB
+  PaintingBinding.instance.imageCache.maximumSizeBytes =
+      50 * 1024 * 1024; // 50MB
   PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
 
   sharedPlayer = AudioPlayer(
-    audioPipeline: androidEq != null
-        ? AudioPipeline(androidAudioEffects: [androidEq])
-        : null,
+    audioPipeline:
+        androidEq != null
+            ? AudioPipeline(androidAudioEffects: [androidEq])
+            : null,
   );
 
   final handler = await AudioService.init(
