@@ -1,5 +1,5 @@
 name: solara_flutter
-description: "A new Flutter project."
+description: "Sonata — 全平台音乐播放器（Flutter + Go）。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -89,6 +89,7 @@ flutter:
 
   assets:
     - assets/app_icon.png
+    - assets/branding/sonata-icon-1024.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

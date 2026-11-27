@@ -130,7 +130,7 @@ class _SolaraAppState extends ConsumerState<SolaraApp> {
     }
 
     return MaterialApp(
-      title: 'Solara',
+      title: 'Sonata',
       debugShowCheckedModeBanner: false,
       // 主题整体换成「落日橙 + 深空底色」：亮/暗两套都由 solaraTheme 统一生成。
       // 这里固定品牌色，不跟随封面主色：动态配色会让整套 UI 每切一首歌就变色，

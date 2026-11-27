@@ -13,6 +13,7 @@ import '../../services/eq_service.dart';
 import '../../services/sleep_timer_service.dart';
 import '../../services/theme_controller.dart';
 import '../../app/theme.dart';
+import '../widgets/brand_placeholder.dart';
 import 'now_playing_sheets.dart';
 
 class NowPlayingScreen extends ConsumerStatefulWidget {
@@ -420,11 +421,9 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
                                   fit: BoxFit.cover,
                                   cacheWidth: 640,
                                   gaplessPlayback: true,
-                                  errorBuilder:
-                                      (_, __, ___) =>
-                                          _defaultCover(primaryColor),
+                                  errorBuilder: (_, __, ___) => _defaultCover(),
                                 )
-                                : _defaultCover(primaryColor),
+                                : _defaultCover(),
                       ),
                     ),
                   ),
@@ -886,11 +885,12 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
     );
   }
 
-  Widget _defaultCover(Color primaryColor) {
-    return Container(
-      color: primaryColor.withValues(alpha: 0.3),
-      child: const Icon(Icons.music_note, color: Colors.white54, size: 80),
-    );
+  /// 没有封面时的占位：品牌图形，而不是一块主色 + 音符。
+  ///
+  /// 用 SizedBox.expand 让它在 ClipOval 里铺满唱片圆盘——图片本身带渐变，
+  /// 铺满后和唱片边缘对齐，看不出是「占位」。
+  Widget _defaultCover() {
+    return const SizedBox.expand(child: BrandPlaceholder(fit: BoxFit.cover));
   }
 
   IconData _playModeIcon(PlayMode mode) {

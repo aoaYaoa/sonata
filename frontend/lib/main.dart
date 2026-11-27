@@ -64,7 +64,7 @@ void main() async {
     builder: () => SolaraAudioHandler(sharedPlayer),
     config: AudioServiceConfig(
       androidNotificationChannelId: 'com.uonoe.solara.audio',
-      androidNotificationChannelName: 'Solara',
+      androidNotificationChannelName: 'Sonata',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
       // macOS 媒体控制支持

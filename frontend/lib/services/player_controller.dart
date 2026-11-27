@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/models/song.dart';
+import '../domain/models/stream_info.dart';
 import '../domain/state/history_state.dart';
 import '../domain/state/player_state.dart';
 import '../domain/state/settings_state.dart';
@@ -36,6 +37,31 @@ class PlayerController extends StateNotifier<PlayerState> {
   String Function()? getQuality;
   bool _isLoading = false;
   bool _isSwitching = false;
+
+  /// 交接代次。用户在这期间手动切歌时 +1，让自动交接那一路知道
+  /// 自己已经过时，不要再补一次 skipNext（否则连跳两首）。
+  int _advanceGeneration = 0;
+
+  /// 正在「上一首播完 → 下一首起来」的交接窗口。
+  ///
+  /// 这个窗口里我们主动 pause 了引擎（否则 completed 状态下 seek(0) 会让上一首
+  /// 继续唱），但 UI 不该闪成「已暂停」——歌没停，只是下一首还在路上。
+  bool _isHandoff = false;
+
+  /// 预取到的流地址。key = `source:id:tier`。
+  ///
+  /// 命中就用完即删：直链是带时效的临时签名，放久了会 403。
+  final Map<String, _PreloadEntry> _preload = {};
+  final Set<String> _preloadInFlight = {};
+
+  /// 往后预取几首。
+  static const int _preloadAhead = 2;
+
+  /// 预取结果的保鲜期，超过就当没有（直链签名一般 10~20 分钟过期）。
+  static const Duration _preloadTtl = Duration(minutes: 10);
+
+  /// 缓存上限，防止连续切歌把内存堆满。
+  static const int _preloadMaxEntries = 8;
   Duration? _restoredPosition;
   int _tickCount = 0;
 
@@ -67,29 +93,48 @@ class PlayerController extends StateNotifier<PlayerState> {
     // 防止 seek(Duration.zero) 触发二次 complete 事件导致重复切歌
     if (_isSwitching) return;
     _isSwitching = true;
-    // 立即 seek 回起点，让 just_audio 脱离 completed 状态
-    // 避免 iOS 系统因 completed 状态关闭 Now Playing 会话（灵动岛/锁屏）
-    engine.seek(Duration.zero).ignore();
+    _isHandoff = true;
     nowPlayingHandler?.beginSwitching();
+    final generation = ++_advanceGeneration;
+    unawaited(_advanceAfterComplete(generation));
+  }
+
+  /// 播完 → 切下一首。
+  ///
+  /// 顺序必须是「先 pause、再 seek(0)、最后才去取下一首的流」，三点原因：
+  ///  1. completed 状态下 just_audio 的 playing 仍是 true，直接 seek(0) 会让
+  ///     上一首从头再唱，用户听到「这首歌又重播了几秒才跳走」；
+  ///  2. 取流是网络往返（后端还要串上游，冷启动 600ms~2s），必须等静音之后
+  ///     再开始，否则这段时间是「上一首在响」；
+  ///  3. seek(0) 让引擎脱离 completed，iOS 才不会因此关掉 Now Playing 会话
+  ///     （灵动岛/锁屏的控制失效）。
+  Future<void> _advanceAfterComplete(int generation) async {
+    try {
+      await engine.pause();
+      await engine.seek(Duration.zero);
+    } catch (e) {
+      DebugLogBus.add('[PlayerController] 交接暂停失败: $e');
+    }
+    // 用户已经手动切过歌了：这次自动交接作废。
+    if (generation != _advanceGeneration) return;
     final queue = getQueue?.call() ?? [];
     final playMode = getPlayMode?.call() ?? PlayMode.list;
     final currentIndex = getCurrentQueueIndex?.call() ?? 0;
     // 兜底用 'auto'，与 SettingsState 默认值一致：写死 '320' 会让没注入
     // getQuality 的场景（如恢复会话后首次播放）悄悄降档。
     final quality = getQuality?.call() ?? 'auto';
-    if (queue.isEmpty) {
-      if (state.currentSong != null) {
-        playSong(state.currentSong!, quality: quality);
+    if (queue.isEmpty || playMode == PlayMode.single) {
+      final song = state.currentSong;
+      if (song == null) {
+        _isHandoff = false;
+        _isSwitching = false;
+        nowPlayingHandler?.endSwitching();
+        return;
       }
+      await playSong(song, quality: quality);
       return;
     }
-    if (playMode == PlayMode.single) {
-      if (state.currentSong != null) {
-        playSong(state.currentSong!, quality: quality);
-      }
-      return;
-    }
-    skipNext(
+    await skipNext(
       queue: queue,
       currentIndex: currentIndex,
       playMode: playMode,
@@ -102,9 +147,13 @@ class PlayerController extends StateNotifier<PlayerState> {
     if (_isLoading) return;
     // 同步引擎播放状态（被其他 app 打断时引擎会暂停，需及时反映到 UI）
     final enginePlaying = engine.isPlaying;
-    if (enginePlaying != state.isPlaying && !_isLoading) {
+    // 交接窗口里引擎是故意暂停的，别把 UI 闪成「已暂停」。
+    if (enginePlaying != state.isPlaying && !_isLoading && !_isHandoff) {
       state = state.copyWith(isPlaying: enginePlaying);
     }
+    // 交接窗口里不要拿引擎的 position 覆盖：我们在窗口内 seek(0) 了，
+    // 直接同步会让进度条从末尾瞬移到 0，看着像「重头播了」。
+    if (_isHandoff) return;
     // 引擎未加载（duration为null且未播放）时不更新 position/duration，保留启动恢复的值
     if (engine.duration == null && !enginePlaying) return;
     final position = engine.position;
@@ -232,6 +281,8 @@ class PlayerController extends StateNotifier<PlayerState> {
     Duration? seekTo,
   }) async {
     _isLoading = true;
+    // 任何一次主动加载都让上一轮「播完自动交接」作废
+    _advanceGeneration++;
     // 保留旧封面，切歌过渡期间用于锁屏/灵动岛显示
     final previousArtworkUrl = state.artworkUrl;
 
@@ -281,7 +332,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     );
 
     try {
-      final String url;
+      String url;
       String actualQuality = '';
       int actualBitrate = 0;
       bool isPreview = false;
@@ -295,28 +346,29 @@ class PlayerController extends StateNotifier<PlayerState> {
         // Jamendo urlId 直接是 MP3 URL
         url = song.urlId;
       } else {
-        // mid 是「档位标识」：酷狗换音质要换 hash，QQ 要 media_mid。
-        // 拿不到该档位时退到下一档，而不是让后端自己猜（那会多一次反查）。
-        final plan = _resolveStreamPlan(song, quality);
-        final info = await repository.fetchStream(
-          songId: song.id,
-          source: song.source,
-          quality: plan.quality,
-          mediaId: plan.mediaId,
-        );
-        actualQuality = info.quality;
-        actualBitrate = info.bitrate;
-        isPreview = info.preview;
-        final rawUrl = info.url;
-        // 这些源的直链要么需要 Referer，要么只有 HTTP（酷狗 fsvippc），
-        // 都必须经后端代理播放，否则 iOS ATS 直接拦。
-        if (_needsProxy(song.source, rawUrl)) {
-          url = '${AppConfig.baseUrl}/proxy?url=${Uri.encodeComponent(rawUrl)}';
-        } else {
-          url = rawUrl;
-        }
+        final resolved = await _resolveStream(song, quality);
+        url = resolved.url;
+        actualQuality = resolved.quality;
+        actualBitrate = resolved.bitrate;
+        isPreview = resolved.preview;
       }
-      await engine.setSource(url);
+      try {
+        await engine.setSource(url);
+      } catch (e) {
+        // 预取直链是带时效的签名，放久了会 403；这里退回现场重取一次。
+        // 只有非本地/非 Jamendo 直链才有「重取」这回事。
+        if (song.source == 'local' ||
+            (song.source == 'jamendo' && song.urlId.startsWith('http'))) {
+          rethrow;
+        }
+        DebugLogBus.add('[PlayerController] 直链失效，重取: $e');
+        final retried = await _resolveStream(song, quality, usePreload: false);
+        url = retried.url;
+        actualQuality = retried.quality;
+        actualBitrate = retried.bitrate;
+        isPreview = retried.preview;
+        await engine.setSource(url);
+      }
       engine.play().catchError((e) {
         DebugLogBus.add('[PlayerController] play() error (ignored): $e');
       });
@@ -328,6 +380,7 @@ class PlayerController extends StateNotifier<PlayerState> {
       // 引擎就绪，解除 loading 锁，让 _tick() 开始同步
       _isLoading = false;
       _isSwitching = false;
+      _isHandoff = false;
       nowPlayingHandler?.endSwitching();
       state = state.copyWith(
         isPlaying: true,
@@ -405,11 +458,156 @@ class PlayerController extends StateNotifier<PlayerState> {
       unawaited(Future.wait([lyricFuture, artworkFuture]));
 
       onSongPlayed?.call(song);
+
+      // 播放已经起来了，再去预取后面的歌：串行做的话首响会被拖慢。
+      _preloadUpcoming(
+        queue: queue,
+        currentIndex: getCurrentQueueIndex?.call() ?? 0,
+        playMode: getPlayMode?.call() ?? PlayMode.list,
+        quality: quality,
+      );
     } catch (e, st) {
       _isLoading = false;
       _isSwitching = false;
+      _isHandoff = false;
       DebugLogBus.add('[PlayerController] playSong error: $e\n$st');
       state = state.copyWith(error: e.toString(), isPlaying: false);
+    }
+  }
+
+  /// 取流：先查预取缓存，没有再请求后端。
+  ///
+  /// 返回的 url 已经过代理判定（B站/YouTube 的 Referer 校验、酷狗只有 HTTP
+  /// 的那批都走 `/proxy`），调用方直接塞给引擎即可。
+  Future<({String url, String quality, int bitrate, bool preview})>
+  _resolveStream(Song song, String quality, {bool usePreload = true}) async {
+    // mid 是「档位标识」：酷狗换音质要换 hash，QQ 要 media_mid。
+    // 拿不到该档位时退到下一档，而不是让后端自己猜（那会多一次反查）。
+    final plan = _resolveStreamPlan(song, quality);
+    final key = _preloadKey(song, plan.quality, plan.mediaId);
+
+    final cached = usePreload ? _takePreloaded(key) : null;
+    if (cached != null) {
+      DebugLogBus.add('[PlayerController] 预取命中 ${song.name}');
+      return _toPlayable(song, cached);
+    }
+
+    final info = await repository.fetchStream(
+      songId: song.id,
+      source: song.source,
+      quality: plan.quality,
+      mediaId: plan.mediaId,
+    );
+    return _toPlayable(song, info);
+  }
+
+  /// 把取流回执转成实际播放地址（含代理转换）。
+  ({String url, String quality, int bitrate, bool preview}) _toPlayable(
+    Song song,
+    StreamInfo info,
+  ) {
+    final rawUrl = info.url;
+    // 这些源的直链要么需要 Referer，要么只有 HTTP（酷狗 fsvippc），
+    // 都必须经后端代理播放，否则 iOS ATS 直接拦。
+    final url =
+        _needsProxy(song.source, rawUrl)
+            ? '${AppConfig.baseUrl}/proxy?url=${Uri.encodeComponent(rawUrl)}'
+            : rawUrl;
+    return (
+      url: url,
+      quality: info.quality,
+      bitrate: info.bitrate,
+      preview: info.preview,
+    );
+  }
+
+  String _preloadKey(Song song, String quality, String? mediaId) =>
+      '${song.source}:${song.id}:$quality:${mediaId ?? ''}';
+
+  /// 取一条预取结果：命中即删（直链有签名时效，留着下次也会 403）。
+  StreamInfo? _takePreloaded(String key) {
+    final entry = _preload.remove(key);
+    if (entry == null) return null;
+    if (DateTime.now().difference(entry.at) > _preloadTtl) return null;
+    return entry.info;
+  }
+
+  /// 预取当前曲后面的 [_preloadAhead] 首。
+  ///
+  /// 为什么不是「等播完再去取」：后端要串行打上游接口（网易云/QQ/酷狗），
+  /// 冷启动一趟 600ms~2s。这个时间里播放器已经 completed，用户听到的就是
+  /// 上一首重播了几秒再被切走。提前把直链拿到手，切歌只剩 `setSource`。
+  ///
+  /// 串行 + 单首提前返回：并发打后端会把同一批次的上游请求挤在一起，
+  /// 反而更慢；预取是后台行为，慢一点没有代价。
+  void _preloadUpcoming({
+    required List<Song> queue,
+    required int currentIndex,
+    required PlayMode playMode,
+    required String quality,
+  }) {
+    if (queue.isEmpty) return;
+    // 单曲循环永远重播同一首，预取后面没有意义。
+    if (playMode == PlayMode.single) return;
+    // 队列变了，旧结果作废（避免「下一首」被上一批预取带偏）
+    _prunePreload();
+
+    var index = currentIndex;
+    for (var step = 1; step <= _preloadAhead; step++) {
+      if (playMode == PlayMode.random) {
+        if (queue.length <= 1) return;
+        index = _random.nextInt(queue.length);
+      } else {
+        index = (index + 1) % queue.length;
+      }
+      if (index == currentIndex) return;
+      final song = queue[index];
+      // 本地文件与 Jamendo 直链不需要取流
+      if (song.source == 'local' ||
+          (song.source == 'jamendo' && song.urlId.startsWith('http'))) {
+        continue;
+      }
+      final plan = _resolveStreamPlan(song, quality);
+      final key = _preloadKey(song, plan.quality, plan.mediaId);
+      if (_preload.containsKey(key) || _preloadInFlight.contains(key)) continue;
+
+      _preloadInFlight.add(key);
+      DebugLogBus.add('[PlayerController] 预取 ${song.name}');
+      repository
+          .fetchStream(
+            songId: song.id,
+            source: song.source,
+            quality: plan.quality,
+            mediaId: plan.mediaId,
+          )
+          .then((info) {
+            _preload[key] = _PreloadEntry(info: info, at: DateTime.now());
+            _prunePreload();
+          })
+          .catchError((Object e) {
+            // 预取失败不影响播放：真正切过去时还会再取一次
+            DebugLogBus.add('[PlayerController] 预取失败 ${song.name}: $e');
+          })
+          .whenComplete(() => _preloadInFlight.remove(key));
+    }
+  }
+
+  /// 丢掉过期条目与超出上限最旧的那批。
+  void _prunePreload() {
+    if (_preload.isEmpty) return;
+    final now = DateTime.now();
+    _preload.removeWhere((_, e) => now.difference(e.at) > _preloadTtl);
+    while (_preload.length > _preloadMaxEntries) {
+      String? oldestKey;
+      DateTime? oldest;
+      _preload.forEach((k, v) {
+        if (oldest == null || v.at.isBefore(oldest!)) {
+          oldest = v.at;
+          oldestKey = k;
+        }
+      });
+      if (oldestKey == null) break;
+      _preload.remove(oldestKey);
     }
   }
 
@@ -554,36 +752,43 @@ class PlayerController extends StateNotifier<PlayerState> {
     }
     setCurrentQueueIndex?.call(nextIndex);
     await playSong(queue[nextIndex], quality: quality);
-    // 预热再下一首的封面进图片缓存
-    _precacheNextArtwork(queue, nextIndex, playMode);
+    // 再下一首的封面提前进图片缓存（切歌时不会空一拍）
+    _precacheArtworkOf(queue, nextIndex, playMode);
   }
 
-  void _precacheNextArtwork(
+  /// 预热后面一两首的封面进图片缓存。
+  void _precacheArtworkOf(
     List<Song> queue,
     int currentIndex,
     PlayMode playMode,
   ) {
     if (queue.length <= 1) return;
-    final nextIndex =
-        playMode == PlayMode.random
-            ? _random.nextInt(queue.length)
-            : (currentIndex + 1) % queue.length;
-    final next = queue[nextIndex];
-    String? url;
-    if (next.picUrl != null && next.picUrl!.isNotEmpty) {
-      url =
-          '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(next.picUrl!)}';
-    } else if (next.picId.isNotEmpty) {
-      url = repository.buildPicProxyUrl(picId: next.picId, source: next.source);
-    }
-    if (url != null) {
-      final imageProvider = NetworkImage(url);
-      imageProvider.obtainKey(ImageConfiguration.empty).then((key) {
-        final cache = PaintingBinding.instance.imageCache;
-        if (!cache.containsKey(key)) {
-          imageProvider.resolve(ImageConfiguration.empty);
-        }
-      }).ignore();
+    for (var step = 1; step <= _preloadAhead; step++) {
+      final index =
+          playMode == PlayMode.random
+              ? _random.nextInt(queue.length)
+              : (currentIndex + step) % queue.length;
+      if (index == currentIndex) break;
+      final song = queue[index];
+      String? url;
+      if (song.picUrl != null && song.picUrl!.isNotEmpty) {
+        url =
+            '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(song.picUrl!)}';
+      } else if (song.picId.isNotEmpty) {
+        url = repository.buildPicProxyUrl(
+          picId: song.picId,
+          source: song.source,
+        );
+      }
+      if (url != null) {
+        final imageProvider = NetworkImage(url);
+        imageProvider.obtainKey(ImageConfiguration.empty).then((key) {
+          final cache = PaintingBinding.instance.imageCache;
+          if (!cache.containsKey(key)) {
+            imageProvider.resolve(ImageConfiguration.empty);
+          }
+        }).ignore();
+      }
     }
   }
 
@@ -621,6 +826,8 @@ class PlayerController extends StateNotifier<PlayerState> {
 
   @override
   void dispose() {
+    _preload.clear();
+    _preloadInFlight.clear();
     _timer?.cancel();
     _durationTimer?.cancel();
     _completeSub?.cancel();
@@ -691,3 +898,11 @@ final sleepTimerWithPlayerProvider =
         },
       ),
     );
+
+/// 一条预取结果。`at` 是取回时间，用来判过期。
+class _PreloadEntry {
+  final StreamInfo info;
+  final DateTime at;
+
+  const _PreloadEntry({required this.info, required this.at});
+}

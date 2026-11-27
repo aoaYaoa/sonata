@@ -204,7 +204,7 @@ class _MacSidebar extends ConsumerWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  'Solara',
+                  'Sonata',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.6,

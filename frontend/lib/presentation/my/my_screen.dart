@@ -253,7 +253,7 @@ class _ProfileCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Solara',
+                    'Sonata',
                     style: TextStyle(
                       fontSize: 19,
                       fontWeight: FontWeight.w800,

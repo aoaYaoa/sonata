@@ -417,7 +417,7 @@ class _AppBanner extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Solara',
+                  'Sonata',
                   style: TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w800,
@@ -874,7 +874,7 @@ class _AboutCard extends StatelessWidget {
         _SettingsTile(
           icon: Icons.info_outline_rounded,
           iconColor: const Color(0xFF6C7BFF),
-          title: 'Solara',
+          title: 'Sonata',
           subtitle: '版本 ${AppConfig.version} · 构建 ${AppConfig.buildNumber}',
         ),
         const _Divider(),

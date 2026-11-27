@@ -1,11 +1,13 @@
-# Solara
+# Sonata
 
 一款基于 Flutter + Go 的全平台音乐播放器，支持 Android、iOS、macOS、Windows、Linux。
+
+<img src="frontend/assets/branding/sonata-icon-512.png" width="120" alt="Sonata">
 
 ## 项目结构
 
 ```
-solara/
+sonata/
 ├── frontend/   # Flutter 客户端
 └── backend/    # Go + Gin 后端服务
 ```
