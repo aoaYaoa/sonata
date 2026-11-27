@@ -35,7 +35,9 @@ class RemoteStorageService {
   Future<bool> deleteState() async {
     final response = await client.dio.delete(
       '/api/storage',
-      data: {'keys': [key]},
+      data: {
+        'keys': [key],
+      },
     );
     return response.data is Map && response.data['d1Available'] == true;
   }

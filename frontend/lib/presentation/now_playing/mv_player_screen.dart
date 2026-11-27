@@ -103,8 +103,8 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
       final repo = ref.read(solaraRepositoryProvider);
       var url = await repo.fetchMvUrl(mvId: widget.mvId, source: widget.source);
       // B站和YouTube视频需要通过后端代理（需要特殊请求头）
-      if (url.contains('googlevideo.com') || 
-          url.contains('bilivideo') || 
+      if (url.contains('googlevideo.com') ||
+          url.contains('bilivideo') ||
           url.contains('bilibili.com') ||
           url.contains('akamaized.net') ||
           url.contains('mcdn.bilivideo')) {
@@ -127,7 +127,12 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
         _scheduleHide();
       }
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e.toString();
+        });
+      }
     }
   }
 
@@ -221,8 +226,10 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
   void _onHorizontalEnd(DragEndDetails d) {
     final ctrl = _ctrl;
     if (ctrl != null && _activeGesture == _GestureType.seek) {
-      final targetSec = (_seekStartSec + _seekDeltaSec)
-          .clamp(0.0, ctrl.value.duration.inSeconds.toDouble());
+      final targetSec = (_seekStartSec + _seekDeltaSec).clamp(
+        0.0,
+        ctrl.value.duration.inSeconds.toDouble(),
+      );
       ctrl.seekTo(Duration(milliseconds: (targetSec * 1000).round()));
     }
     _activeGesture = null;
@@ -236,9 +243,13 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
     final isPlaying = ctrl?.value.isPlaying ?? false;
     final position = ctrl?.value.position ?? Duration.zero;
     final duration = ctrl?.value.duration ?? Duration.zero;
-    final progress = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
+    final progress =
+        duration.inMilliseconds > 0
+            ? (position.inMilliseconds / duration.inMilliseconds).clamp(
+              0.0,
+              1.0,
+            )
+            : 0.0;
     final size = MediaQuery.of(context).size;
 
     return Scaffold(
@@ -256,7 +267,9 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
           children: [
             // ── 视频层 ────────────────────────────────────
             if (_loading)
-              const Center(child: CircularProgressIndicator(color: Colors.white))
+              const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              )
             else if (_error != null)
               Center(
                 child: Padding(
@@ -264,21 +277,42 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.error_outline, color: Colors.white54, size: 48),
+                      const Icon(
+                        Icons.error_outline,
+                        color: Colors.white54,
+                        size: 48,
+                      ),
                       const SizedBox(height: 12),
-                      const Text('MV 加载失败',
-                          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'MV 加载失败',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       const SizedBox(height: 6),
-                      Text(_error!,
-                          style: const TextStyle(color: Colors.white54, fontSize: 12),
-                          textAlign: TextAlign.center),
+                      Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
                       const SizedBox(height: 20),
                       TextButton(
                         onPressed: () {
-                          setState(() { _loading = true; _error = null; });
+                          setState(() {
+                            _loading = true;
+                            _error = null;
+                          });
                           _loadMv();
                         },
-                        child: const Text('重试', style: TextStyle(color: Colors.white)),
+                        child: const Text(
+                          '重试',
+                          style: TextStyle(color: Colors.white),
+                        ),
                       ),
                     ],
                   ),
@@ -296,25 +330,31 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
             if (_showGestureHint && _activeGesture != null)
               _GestureHint(
                 type: _activeGesture!,
-                value: _activeGesture == _GestureType.seek
-                    ? null
-                    : _gestureCurrent,
+                value:
+                    _activeGesture == _GestureType.seek
+                        ? null
+                        : _gestureCurrent,
                 seekDelta: _seekDeltaSec,
-                seekTarget: _activeGesture == _GestureType.seek
-                    ? _seekStartSec + _seekDeltaSec
-                    : null,
+                seekTarget:
+                    _activeGesture == _GestureType.seek
+                        ? _seekStartSec + _seekDeltaSec
+                        : null,
                 fmt: _fmt,
               ),
 
             // ── 常驻返回按钮（控制栏隐藏时也可见）────────
             if (!_loading && _error == null && !_showControls)
               Positioned(
-                top: 0, left: 0,
+                top: 0,
+                left: 0,
                 child: SafeArea(
                   bottom: false,
                   child: IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white54, size: 20),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white54,
+                      size: 20,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ),
@@ -331,7 +371,9 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                     children: [
                       // 顶部渐变 + 标题
                       Positioned(
-                        top: 0, left: 0, right: 0,
+                        top: 0,
+                        left: 0,
+                        right: 0,
                         child: Container(
                           padding: const EdgeInsets.fromLTRB(4, 0, 16, 24),
                           decoration: const BoxDecoration(
@@ -346,27 +388,39 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                             child: Row(
                               children: [
                                 IconButton(
-                                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                                      color: Colors.white, size: 20),
+                                  icon: const Icon(
+                                    Icons.arrow_back_ios_new_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
                                   onPressed: () => Navigator.of(context).pop(),
                                 ),
                                 const SizedBox(width: 4),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text(widget.songName,
-                                          style: const TextStyle(
-                                              color: Colors.white, fontSize: 15,
-                                              fontWeight: FontWeight.w600),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
-                                      Text(widget.artist,
-                                          style: const TextStyle(
-                                              color: Colors.white70, fontSize: 12),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
+                                      Text(
+                                        widget.songName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Text(
+                                        widget.artist,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ],
                                   ),
                                 ),
@@ -393,7 +447,9 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
-                              isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                              isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
                               color: Colors.white,
                               size: 40,
                             ),
@@ -403,7 +459,9 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
 
                       // 底部渐变 + 进度控制
                       Positioned(
-                        bottom: 0, left: 0, right: 0,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
                         child: Container(
                           padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
                           decoration: const BoxDecoration(
@@ -421,8 +479,12 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                                 SliderTheme(
                                   data: SliderThemeData(
                                     trackHeight: 2.5,
-                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 5,
+                                    ),
+                                    overlayShape: const RoundSliderOverlayShape(
+                                      overlayRadius: 10,
+                                    ),
                                     activeTrackColor: Colors.white,
                                     inactiveTrackColor: Colors.white30,
                                     thumbColor: Colors.white,
@@ -430,27 +492,48 @@ class _MvPlayerScreenState extends ConsumerState<MvPlayerScreen>
                                   ),
                                   child: Slider(
                                     value: progress,
-                                    onChanged: ctrl != null && duration.inMilliseconds > 0
-                                        ? (v) {
-                                            ctrl.seekTo(Duration(
-                                                milliseconds:
-                                                    (v * duration.inMilliseconds).round()));
-                                            _scheduleHide();
-                                          }
-                                        : null,
+                                    onChanged:
+                                        ctrl != null &&
+                                                duration.inMilliseconds > 0
+                                            ? (v) {
+                                              ctrl.seekTo(
+                                                Duration(
+                                                  milliseconds:
+                                                      (v *
+                                                              duration
+                                                                  .inMilliseconds)
+                                                          .round(),
+                                                ),
+                                              );
+                                              _scheduleHide();
+                                            }
+                                            : null,
                                   ),
                                 ),
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    4,
+                                    0,
+                                    4,
+                                    8,
+                                  ),
                                   child: Row(
                                     children: [
-                                      Text(_fmt(position),
-                                          style: const TextStyle(
-                                              color: Colors.white70, fontSize: 11)),
+                                      Text(
+                                        _fmt(position),
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                       const Spacer(),
-                                      Text(_fmt(duration),
-                                          style: const TextStyle(
-                                              color: Colors.white70, fontSize: 11)),
+                                      Text(
+                                        _fmt(duration),
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 11,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
@@ -474,7 +557,7 @@ enum _GestureType { brightness, volume, seek }
 
 class _GestureHint extends StatelessWidget {
   final _GestureType type;
-  final double? value;      // 0~1，亮度或音量
+  final double? value; // 0~1，亮度或音量
   final double seekDelta;
   final double? seekTarget; // 秒
   final String Function(Duration) fmt;
@@ -493,17 +576,19 @@ class _GestureHint extends StatelessWidget {
     String label;
     if (type == _GestureType.brightness) {
       final pct = ((value ?? 0) * 100).round();
-      icon = pct > 60
-          ? Icons.brightness_high
-          : pct > 30
+      icon =
+          pct > 60
+              ? Icons.brightness_high
+              : pct > 30
               ? Icons.brightness_medium
               : Icons.brightness_low;
       label = '$pct%';
     } else if (type == _GestureType.volume) {
       final pct = ((value ?? 0) * 100).round();
-      icon = pct == 0
-          ? Icons.volume_off
-          : pct < 50
+      icon =
+          pct == 0
+              ? Icons.volume_off
+              : pct < 50
               ? Icons.volume_down
               : Icons.volume_up;
       label = '$pct%';
@@ -511,7 +596,8 @@ class _GestureHint extends StatelessWidget {
       final sec = seekDelta.round();
       icon = sec >= 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded;
       final t = seekTarget ?? 0;
-      label = '${sec >= 0 ? '+' : ''}${sec}s  ${fmt(Duration(milliseconds: (t * 1000).round()))}';
+      label =
+          '${sec >= 0 ? '+' : ''}${sec}s  ${fmt(Duration(milliseconds: (t * 1000).round()))}';
     }
     return Center(
       child: Container(
@@ -536,11 +622,14 @@ class _GestureHint extends StatelessWidget {
                 ),
               ),
             const SizedBox(height: 6),
-            Text(label,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),

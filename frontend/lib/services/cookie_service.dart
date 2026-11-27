@@ -10,8 +10,9 @@ class CookieStatus {
 
   bool get isExpired {
     if (!exists || expiry == null || expiry == 0) return false;
-    return DateTime.fromMillisecondsSinceEpoch(expiry! * 1000)
-        .isBefore(DateTime.now());
+    return DateTime.fromMillisecondsSinceEpoch(
+      expiry! * 1000,
+    ).isBefore(DateTime.now());
   }
 
   int? get daysUntilExpiry {

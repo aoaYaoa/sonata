@@ -30,27 +30,30 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
     final playing = _player.playing;
     final rawState = _player.processingState;
     // 切歌过渡期间，不向系统广播 completed，避免灵动岛/锁屏被关闭
-    final mappedState = (_isSwitching && rawState == ProcessingState.completed)
-        ? AudioProcessingState.loading
-        : _mapProcessingState(rawState);
-    playbackState.add(playbackState.value.copyWith(
-      controls: [
-        MediaControl.skipToPrevious,
-        playing ? MediaControl.pause : MediaControl.play,
-        MediaControl.skipToNext,
-      ],
-      systemActions: const {
-        MediaAction.seek,
-        MediaAction.seekForward,
-        MediaAction.seekBackward,
-      },
-      androidCompactActionIndices: const [0, 1, 2],
-      processingState: mappedState,
-      playing: playing,
-      updatePosition: _player.position,
-      bufferedPosition: _player.bufferedPosition,
-      speed: _player.speed,
-    ));
+    final mappedState =
+        (_isSwitching && rawState == ProcessingState.completed)
+            ? AudioProcessingState.loading
+            : _mapProcessingState(rawState);
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: [
+          MediaControl.skipToPrevious,
+          playing ? MediaControl.pause : MediaControl.play,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
+        androidCompactActionIndices: const [0, 1, 2],
+        processingState: mappedState,
+        playing: playing,
+        updatePosition: _player.position,
+        bufferedPosition: _player.bufferedPosition,
+        speed: _player.speed,
+      ),
+    );
   }
 
   AudioProcessingState _mapProcessingState(ProcessingState state) {
@@ -75,13 +78,15 @@ class SolaraAudioHandler extends BaseAudioHandler with SeekHandler {
     String? artworkUrl,
     Duration? duration,
   }) {
-    mediaItem.add(MediaItem(
-      id: title,
-      title: title,
-      artist: artist,
-      artUri: artworkUrl != null ? Uri.tryParse(artworkUrl) : null,
-      duration: duration,
-    ));
+    mediaItem.add(
+      MediaItem(
+        id: title,
+        title: title,
+        artist: artist,
+        artUri: artworkUrl != null ? Uri.tryParse(artworkUrl) : null,
+        duration: duration,
+      ),
+    );
   }
 
   @override

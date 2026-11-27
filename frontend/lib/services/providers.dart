@@ -5,7 +5,9 @@ import '../data/providers.dart';
 import 'remote_storage_service.dart';
 import 'sync_controller.dart';
 
-final storageServiceProvider = Provider<StorageService>((ref) => StorageService());
+final storageServiceProvider = Provider<StorageService>(
+  (ref) => StorageService(),
+);
 
 final remoteStorageServiceProvider = Provider<RemoteStorageService>((ref) {
   return RemoteStorageService(client: ref.watch(apiClientProvider));

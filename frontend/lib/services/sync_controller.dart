@@ -1,15 +1,45 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'remote_state_models.dart';
 import 'remote_storage_service.dart';
 import 'storage_service.dart';
 
-class SyncController {
+/// 云端同步的状态。
+///
+/// 之前同步是完全静默的：`app.dart` 启动时调一次 `initialize()`，
+/// 之后每次写本地就 scheduleSync 一次，成功失败都没有任何界面反馈。
+/// 用户无法判断「我在另一台机器上的收藏到底同步过来没有」。
+class SyncController extends ChangeNotifier {
   final StorageService storage;
   final RemoteStorageService remote;
   final Duration debounce;
   Timer? _debounceTimer;
   bool _syncInFlight = false;
   bool _initialized = false;
+
+  DateTime? _lastSyncedAt;
+  String? _lastError;
+
+  /// 上一次成功同步（上传或拉取合并）的时间；从未成功过则为 null。
+  DateTime? get lastSyncedAt => _lastSyncedAt;
+
+  /// 上一次失败的原因；成功后清空。
+  String? get lastError => _lastError;
+
+  bool get syncing => _syncInFlight;
+
+  bool get initialized => _initialized;
+
+  void _markSuccess() {
+    _lastSyncedAt = DateTime.now();
+    _lastError = null;
+    notifyListeners();
+  }
+
+  void _markFailure(Object e) {
+    _lastError = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    notifyListeners();
+  }
 
   SyncController({
     required this.storage,
@@ -20,21 +50,33 @@ class SyncController {
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
-    final local = await _loadLocalSnapshot();
-    final remoteSnapshot = await remote.fetchState();
-    if (remoteSnapshot == null) {
-      if (local != null) {
-        await _persistSnapshot(local);
-        await remote.saveState(local);
+    _syncInFlight = true;
+    notifyListeners();
+    try {
+      final local = await _loadLocalSnapshot();
+      final remoteSnapshot = await remote.fetchState();
+      if (remoteSnapshot == null) {
+        if (local != null) {
+          await _persistSnapshot(local);
+          await remote.saveState(local);
+        }
+        _markSuccess();
+        return;
       }
-      return;
-    }
 
-    final merged = local == null ? remoteSnapshot : local.mergeWith(remoteSnapshot);
-    await _persistSnapshot(merged);
+      final merged =
+          local == null ? remoteSnapshot : local.mergeWith(remoteSnapshot);
+      await _persistSnapshot(merged);
 
-    if (local != null && merged.updatedAt.isAfter(remoteSnapshot.updatedAt)) {
-      await remote.saveState(merged);
+      if (local != null && merged.updatedAt.isAfter(remoteSnapshot.updatedAt)) {
+        await remote.saveState(merged);
+      }
+      _markSuccess();
+    } catch (e) {
+      _markFailure(e);
+    } finally {
+      _syncInFlight = false;
+      notifyListeners();
     }
   }
 
@@ -46,15 +88,23 @@ class SyncController {
   Future<void> _performSync() async {
     if (_syncInFlight) return;
     _syncInFlight = true;
+    notifyListeners();
     try {
       final local = await _loadLocalSnapshot();
       if (local != null) {
         await remote.saveState(local);
       }
+      _markSuccess();
+    } catch (e) {
+      _markFailure(e);
     } finally {
       _syncInFlight = false;
+      notifyListeners();
     }
   }
+
+  /// 手动触发一次上传，给设置页的「立即同步」用。
+  Future<void> syncNow() => _performSync();
 
   Future<RemoteStateSnapshot?> _loadLocalSnapshot() async {
     final now = DateTime.now().toUtc();
@@ -64,19 +114,31 @@ class SyncController {
     final queue = _buildQueue(queueRaw, queueUpdatedAtRaw, now);
 
     final favoritesRaw = await storage.getJson<List<dynamic>>('favoriteSongs');
-    final favoritesUpdatedAtRaw =
-        await storage.getJson<String>('favoritesUpdatedAt');
+    final favoritesUpdatedAtRaw = await storage.getJson<String>(
+      'favoritesUpdatedAt',
+    );
     final favorites = _buildFavorites(favoritesRaw, favoritesUpdatedAtRaw, now);
 
     final settingsRaw = await storage.getJson<Map<String, dynamic>>('settings');
-    final settingsUpdatedAtRaw = await storage.getJson<String>('settingsUpdatedAt');
+    final settingsUpdatedAtRaw = await storage.getJson<String>(
+      'settingsUpdatedAt',
+    );
     final settings = _buildSettings(settingsRaw, settingsUpdatedAtRaw, now);
 
     final localSongsRaw = await storage.getJson<List<dynamic>>('localSongs');
-    final localSongsUpdatedAtRaw = await storage.getJson<String>('localSongsUpdatedAt');
-    final localSongs = _buildLocalSongs(localSongsRaw, localSongsUpdatedAtRaw, now);
+    final localSongsUpdatedAtRaw = await storage.getJson<String>(
+      'localSongsUpdatedAt',
+    );
+    final localSongs = _buildLocalSongs(
+      localSongsRaw,
+      localSongsUpdatedAtRaw,
+      now,
+    );
 
-    if (queue == null && favorites == null && settings == null && localSongs == null) {
+    if (queue == null &&
+        favorites == null &&
+        settings == null &&
+        localSongs == null) {
       return null;
     }
 
@@ -104,7 +166,8 @@ class SyncController {
   ) {
     if (raw == null) return null;
     final updatedAt = _resolveUpdatedAt(updatedAtRaw, now: now, hasData: true);
-    final songs = raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    final songs =
+        raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteQueueState(updatedAt: updatedAt, songs: songs);
   }
 
@@ -115,7 +178,8 @@ class SyncController {
   ) {
     if (raw == null) return null;
     final updatedAt = _resolveUpdatedAt(updatedAtRaw, now: now, hasData: true);
-    final songs = raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    final songs =
+        raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteFavoritesState(updatedAt: updatedAt, songs: songs);
   }
 
@@ -136,7 +200,8 @@ class SyncController {
   ) {
     if (raw == null) return null;
     final updatedAt = _resolveUpdatedAt(updatedAtRaw, now: now, hasData: true);
-    final songs = raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+    final songs =
+        raw.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteLocalSongsState(updatedAt: updatedAt, songs: songs);
   }
 
@@ -168,7 +233,10 @@ class SyncController {
     final queue = snapshot.queue;
     if (queue != null) {
       await storage.setJson('playlistSongs', queue.songs);
-      await storage.setJson('queueUpdatedAt', queue.updatedAt.toIso8601String());
+      await storage.setJson(
+        'queueUpdatedAt',
+        queue.updatedAt.toIso8601String(),
+      );
     }
 
     final favorites = snapshot.favorites;

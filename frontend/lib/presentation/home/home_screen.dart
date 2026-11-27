@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../app/theme.dart';
 import '../../domain/state/settings_state.dart';
 import '../../presentation/debug/debug_console.dart';
 import '../../domain/state/queue_state.dart';
@@ -11,7 +11,8 @@ import '../search/search_panel.dart';
 import '../discover/discover_screen.dart';
 import '../my/my_screen.dart';
 import '../settings/settings_screen.dart';
-import '../now_playing/now_playing_screen.dart';
+import '../now_playing/open_now_playing.dart';
+import '../widgets/solara_ui.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -42,10 +43,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   static const _tabs = [
-    _TabItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: '首页'),
-    _TabItem(icon: Icons.explore_outlined, activeIcon: Icons.explore, label: '发现'),
-    _TabItem(icon: Icons.person_outline, activeIcon: Icons.person, label: '我的'),
-    _TabItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: '设置'),
+    _TabItem(
+      icon: Icons.home_outlined,
+      activeIcon: Icons.home_rounded,
+      label: '首页',
+    ),
+    _TabItem(
+      icon: Icons.explore_outlined,
+      activeIcon: Icons.explore_rounded,
+      label: '发现',
+    ),
+    _TabItem(
+      icon: Icons.person_outline_rounded,
+      activeIcon: Icons.person_rounded,
+      label: '我的',
+    ),
+    _TabItem(
+      icon: Icons.tune_rounded,
+      activeIcon: Icons.tune_rounded,
+      label: '设置',
+    ),
   ];
 
   @override
@@ -65,15 +82,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     }
 
+    // 布局：内容 → 播放条 → 悬浮导航胶囊。
+    // 播放条不做「浮在内容之上」的绝对定位，否则各页可滚动内容会被它遮住一条，
+    // 需要每页手动补底部内边距，改漏一处就是一屏内容被压掉。
     return Scaffold(
       body: Column(
         children: [
           Expanded(child: IndexedStack(index: _currentIndex, children: _pages)),
-          const PlayerBar(),
           if (debugMode) const DebugConsole(),
+          const PlayerBar(),
         ],
       ),
-      bottomNavigationBar: _FrostedNavBar(
+      bottomNavigationBar: _FloatingNavBar(
         currentIndex: _currentIndex,
         tabs: _tabs,
         onTap: (i) => setState(() => _currentIndex = i),
@@ -107,7 +127,6 @@ class _MacLayout extends ConsumerWidget {
     return Scaffold(
       body: Row(
         children: [
-          // ── 侧边栏 ──
           _MacSidebar(
             currentIndex: currentIndex,
             tabs: tabs,
@@ -115,14 +134,13 @@ class _MacLayout extends ConsumerWidget {
             colorScheme: colorScheme,
             onTap: onTap,
           ),
-          // ── 内容区 ──
           Expanded(
             child: Column(
               children: [
                 Expanded(
                   child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 900),
+                      constraints: const BoxConstraints(maxWidth: 980),
                       child: IndexedStack(index: currentIndex, children: pages),
                     ),
                   ),
@@ -154,58 +172,63 @@ class _MacSidebar extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          width: 200,
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.55)
-                : Colors.white.withValues(alpha: 0.75),
-            border: Border(
-              right: BorderSide(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.08)
-                    : Colors.black.withValues(alpha: 0.06),
-              ),
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 顶部 app 名称
-              const SizedBox(height: 20),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Text(
-                  'Solara',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              // 导航项
-              ...List.generate(tabs.length, (i) {
-                final tab = tabs[i];
-                final selected = i == currentIndex;
-                return _SidebarItem(
-                  icon: selected ? tab.activeIcon : tab.icon,
-                  label: tab.label,
-                  selected: selected,
-                  colorScheme: colorScheme,
-                  onTap: () => onTap(i),
-                );
-              }),
-              const Spacer(),
-              // 播放器
-              const _SidebarPlayer(),
-              const SizedBox(height: 16),
-            ],
+    return Container(
+      width: 216,
+      decoration: BoxDecoration(
+        color:
+            isDark ? SolaraColors.darkSurfaceLow : SolaraColors.lightSurfaceLow,
+        border: Border(
+          right: BorderSide(
+            color:
+                isDark
+                    ? SolaraColors.darkOutlineVariant
+                    : SolaraColors.lightOutlineVariant,
           ),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(colors: SolaraColors.sunset),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Solara',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 26),
+          ...List.generate(tabs.length, (i) {
+            final tab = tabs[i];
+            final selected = i == currentIndex;
+            return _SidebarItem(
+              icon: selected ? tab.activeIcon : tab.icon,
+              label: tab.label,
+              selected: selected,
+              colorScheme: colorScheme,
+              onTap: () => onTap(i),
+            );
+          }),
+          const Spacer(),
+          const _SidebarPlayer(),
+          const SizedBox(height: 18),
+        ],
       ),
     );
   }
@@ -228,36 +251,42 @@ class _SidebarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected
-              ? colorScheme.primary.withValues(alpha: 0.12)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      child: Material(
+        color:
+            selected
+                ? colorScheme.primary.withValues(alpha: 0.14)
+                : Colors.transparent,
+        borderRadius: SolaraRadius.tileRadius,
+        child: InkWell(
+          borderRadius: SolaraRadius.tileRadius,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 19,
+                  color:
+                      selected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 11),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color:
+                        selected ? colorScheme.primary : colorScheme.onSurface,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                color: selected ? colorScheme.primary : colorScheme.onSurface,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -276,140 +305,137 @@ class _SidebarPlayer extends ConsumerWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // 同步播放动画
     final position = state.position;
     final duration = state.duration ?? Duration.zero;
-    final progress = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
+    final progress =
+        duration.inMilliseconds > 0
+            ? (position.inMilliseconds / duration.inMilliseconds).clamp(
+              0.0,
+              1.0,
+            )
+            : 0.0;
 
     return GestureDetector(
-      onTap: state.currentSong == null
-          ? null
-          : () => Navigator.of(context).push(
-                PageRouteBuilder(
-                  pageBuilder: (_, animation, __) => FadeTransition(
-                    opacity: animation,
-                    child: const NowPlayingScreen(),
-                  ),
-                  fullscreenDialog: true,
-                  transitionDuration: const Duration(milliseconds: 400),
-                ),
-              ),
+      onTap: state.currentSong == null ? null : () => openNowPlaying(context),
       child: Container(
-      margin: const EdgeInsets.symmetric(horizontal: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.05)
-            : Colors.black.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 歌曲信息
-          Text(
-            state.currentSong?.name ?? '未在播放',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-          if (state.currentSong != null)
+        margin: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color:
+              isDark ? SolaraColors.darkSurfaceHigh : SolaraColors.lightSurface,
+          borderRadius: SolaraRadius.cardRadius,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              state.currentSong!.artist,
+              state.currentSong?.name ?? '未在播放',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: colorScheme.onSurface.withValues(alpha: 0.55),
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          const SizedBox(height: 8),
-          // 进度条
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 3,
-              backgroundColor: colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // 控制按钮
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(
-                onPressed: queueState.songs.isEmpty
-                    ? null
-                    : () => controller.skipPrevious(
-                          queue: queueState.songs,
-                          currentIndex: queueState.currentIndex,
-                          playMode: queueState.playMode,
-                          quality: settings.playbackQuality,
-                        ),
-                icon: const Icon(Icons.skip_previous_rounded),
-                iconSize: 22,
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
+            if (state.currentSong != null)
+              Text(
+                state.currentSong!.artist,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: colorScheme.onSurfaceVariant,
+                ),
               ),
-              Material(
-                color: state.currentSong != null
-                    ? colorScheme.primary
-                    : colorScheme.onSurface.withValues(alpha: 0.1),
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: state.currentSong != null ? controller.toggle : null,
-                  child: SizedBox(
-                    width: 36,
-                    height: 36,
-                    child: Icon(
-                      state.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      color: state.currentSong != null
-                          ? colorScheme.onPrimary
-                          : colorScheme.onSurface.withValues(alpha: 0.3),
-                      size: 20,
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 2.5,
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  onPressed:
+                      queueState.songs.isEmpty
+                          ? null
+                          : () => controller.skipPrevious(
+                            queue: queueState.songs,
+                            currentIndex: queueState.currentIndex,
+                            playMode: queueState.playMode,
+                            quality: settings.playbackQuality,
+                          ),
+                  icon: const Icon(Icons.skip_previous_rounded),
+                  iconSize: 20,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+                Material(
+                  color:
+                      state.currentSong != null
+                          ? colorScheme.primary
+                          : colorScheme.onSurface.withValues(alpha: 0.1),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: state.currentSong != null ? controller.toggle : null,
+                    child: SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: Icon(
+                        state.isPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color:
+                            state.currentSong != null
+                                ? SolaraColors.onAccent(colorScheme.primary)
+                                : colorScheme.onSurface.withValues(alpha: 0.3),
+                        size: 19,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              IconButton(
-                onPressed: queueState.songs.isEmpty
-                    ? null
-                    : () => controller.skipNext(
-                          queue: queueState.songs,
-                          currentIndex: queueState.currentIndex,
-                          playMode: queueState.playMode,
-                          quality: settings.playbackQuality,
-                        ),
-                icon: const Icon(Icons.skip_next_rounded),
-                iconSize: 22,
-                padding: EdgeInsets.zero,
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
-          ),
-        ],
+                IconButton(
+                  onPressed:
+                      queueState.songs.isEmpty
+                          ? null
+                          : () => controller.skipNext(
+                            queue: queueState.songs,
+                            currentIndex: queueState.currentIndex,
+                            playMode: queueState.playMode,
+                            quality: settings.playbackQuality,
+                          ),
+                  icon: const Icon(Icons.skip_next_rounded),
+                  iconSize: 20,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
     );
   }
 }
 
 // ── iOS/通用底部导航 ─────────────────────────────────────────────────────────
-
-class _FrostedNavBar extends StatelessWidget {
+//
+// 悬浮胶囊式：左右留白、圆角、毛玻璃、选中项带一层浅色底。
+// 实心通栏导航（Material 默认）在这种图片密集的音乐 App 里显得很「工具感」。
+class _FloatingNavBar extends StatelessWidget {
   final int currentIndex;
   final List<_TabItem> tabs;
   final ValueChanged<int> onTap;
 
-  const _FrostedNavBar({
+  const _FloatingNavBar({
     required this.currentIndex,
     required this.tabs,
     required this.onTap,
@@ -417,82 +443,74 @@ class _FrostedNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final colorScheme = Theme.of(context).colorScheme;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          decoration: BoxDecoration(
-            color: isDark
-                ? Colors.black.withValues(alpha: 0.55)
-                : Colors.white.withValues(alpha: 0.75),
-            border: Border(
-              top: BorderSide(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.08)
-                    : Colors.black.withValues(alpha: 0.06),
-              ),
-            ),
-          ),
-          child: Padding(
-            padding: EdgeInsets.only(bottom: bottomPadding),
-            child: Row(
-              children: List.generate(tabs.length, (i) {
-                final tab = tabs[i];
-                final selected = i == currentIndex;
-                return Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => onTap(i),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 200),
-                            child: Icon(
-                              selected ? tab.activeIcon : tab.icon,
-                              key: ValueKey(selected),
-                              size: 24,
-                              color: selected
-                                  ? colorScheme.primary
-                                  : colorScheme.onSurfaceVariant,
-                            ),
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, 0, 24, (bottomPadding > 0 ? 6 : 12)),
+      child: GlassSurface(
+        blur: 30,
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(
+          color:
+              isDark
+                  ? Colors.white.withValues(alpha: 0.07)
+                  : Colors.black.withValues(alpha: 0.05),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Row(
+            children: List.generate(tabs.length, (i) {
+              final tab = tabs[i];
+              final selected = i == currentIndex;
+              return Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onTap(i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    padding: const EdgeInsets.symmetric(vertical: 9),
+                    decoration: BoxDecoration(
+                      color:
+                          selected
+                              ? scheme.primary.withValues(
+                                alpha: isDark ? 0.20 : 0.14,
+                              )
+                              : Colors.transparent,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          selected ? tab.activeIcon : tab.icon,
+                          size: 21,
+                          color:
+                              selected
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          tab.label,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight:
+                                selected ? FontWeight.w700 : FontWeight.w500,
+                            color:
+                                selected
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant,
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            tab.label,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                              color: selected
-                                  ? colorScheme.primary
-                                  : colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 250),
-                            curve: Curves.easeOutCubic,
-                            width: selected ? 20 : 0,
-                            height: 2.5,
-                            decoration: BoxDecoration(
-                              color: colorScheme.primary,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              }),
-            ),
+                ),
+              );
+            }),
           ),
         ),
       ),

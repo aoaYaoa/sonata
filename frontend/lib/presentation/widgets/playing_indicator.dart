@@ -84,9 +84,10 @@ class _PlayingIndicatorState extends State<PlayingIndicator>
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: List.generate(_barCount, (i) {
-            final height = widget.isPlaying
-                ? _animations[i].value
-                : (_minHeight + 0.15 * (i % 2 == 0 ? 1 : 0.5));
+            final height =
+                widget.isPlaying
+                    ? _animations[i].value
+                    : (_minHeight + 0.15 * (i % 2 == 0 ? 1 : 0.5));
             return Container(
               width: 3,
               height: widget.size * height,

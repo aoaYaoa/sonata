@@ -74,7 +74,9 @@ class PlayerController extends StateNotifier<PlayerState> {
     final queue = getQueue?.call() ?? [];
     final playMode = getPlayMode?.call() ?? PlayMode.list;
     final currentIndex = getCurrentQueueIndex?.call() ?? 0;
-    final quality = getQuality?.call() ?? '320';
+    // 兜底用 'auto'，与 SettingsState 默认值一致：写死 '320' 会让没注入
+    // getQuality 的场景（如恢复会话后首次播放）悄悄降档。
+    final quality = getQuality?.call() ?? 'auto';
     if (queue.isEmpty) {
       if (state.currentSong != null) {
         playSong(state.currentSong!, quality: quality);
@@ -119,10 +121,12 @@ class PlayerController extends StateNotifier<PlayerState> {
     _tickCount++;
     if (_tickCount >= 10 && state.isPlaying && state.currentSong != null) {
       _tickCount = 0;
-      persistence.savePlaybackPosition(
-        position: state.position,
-        duration: state.duration,
-      ).ignore();
+      persistence
+          .savePlaybackPosition(
+            position: state.position,
+            duration: state.duration,
+          )
+          .ignore();
     }
   }
 
@@ -137,13 +141,104 @@ class PlayerController extends StateNotifier<PlayerState> {
     return -1;
   }
 
-  Future<void> playSong(Song song, {required String quality, Duration? seekTo}) async {
+  /// 是否必须走后端代理播放。
+  ///
+  /// B站/YouTube 的直链带 Referer 校验；酷狗 trackercdn v1 给的
+  /// fsvippc.tx.kugou.com 只有 HTTP（443 端口开着但 TLS 握手失败），
+  /// iOS ATS 会直接拒绝。QQ 与网易云的 HTTPS 直链可以直连。
+  static bool _needsProxy(String source, String url) {
+    if (!url.startsWith('http')) return false;
+    if (source == 'bilibili' || source == 'youtube') return true;
+    if (source == 'kugou' && url.startsWith('http://')) return true;
+    return false;
+  }
+
+  /// 当前曲目。UI 需要读它来决定音质菜单里列出哪些档位，
+  /// 但不应直接碰 `state`（StateNotifier 的保护成员）。
+  Song? get currentSong => state.currentSong;
+
+  /// 把「用户想要的档位」翻译成「这次实际要请求的档位 + 该档位的标识」。
+  ///
+  /// Song.altIds 里只有确实存在且有权限的档位，所以降级在这里发生：
+  /// 选 flac 但没有 flac 就退 320，没有 320 就退 128。
+  /// auto 取表里最高的那一档。
+  ({String quality, String? mediaId}) _resolveStreamPlan(
+    Song song,
+    String requested,
+  ) {
+    final alt = song.altIds;
+    final want = requested.toLowerCase();
+
+    if (want == 'auto') {
+      for (final tier in const ['flac', '320', '128']) {
+        final id = alt[tier];
+        if (id != null && id.isNotEmpty) {
+          return (quality: tier, mediaId: id);
+        }
+      }
+      // 没有 alt 表（老数据或非酷狗/QQ 源）时交给后端自己挑
+      return (quality: 'auto', mediaId: song.mediaId);
+    }
+
+    if (alt.isEmpty) {
+      // 非酷狗/QQ 源，或老缓存里没有 alt 表：把 mediaId 交给后端反查
+      return (quality: requested, mediaId: song.mediaId);
+    }
+
+    if (alt[want] != null && alt[want]!.isNotEmpty) {
+      return (quality: want, mediaId: alt[want]);
+    }
+    // 目标档位不可用：按 flac → 320 → 128 的顺序找最近的可播档
+    final order =
+        want == 'flac'
+            ? const ['320', '128']
+            : (want == '320' ? const ['128'] : const ['320', 'flac']);
+    for (final tier in order) {
+      final id = alt[tier];
+      if (id != null && id.isNotEmpty) {
+        return (quality: tier, mediaId: id);
+      }
+    }
+    return (quality: '128', mediaId: alt['128'] ?? song.mediaId);
+  }
+
+  /// 切换当前歌曲的音质并立刻生效。
+  ///
+  /// 只改设置不重新取流的话，用户点了「320」但听到的还是旧流 —— 这是
+  /// 「音质选项是假的」的根源。这里保持播放进度原地重载。
+  Future<void> applyQuality(String quality) async {
+    final song = state.currentSong;
+    final wasPlaying = state.isPlaying;
+    final position = state.position;
+    if (song == null) return;
+
+    // 本地文件没有音质概念，只记住选择
+    if (song.source == 'local') return;
+
+    await playSong(
+      song,
+      quality: quality,
+      seekTo: position > Duration.zero ? position : null,
+    );
+    if (!wasPlaying) {
+      await engine.pause();
+      state = state.copyWith(isPlaying: false);
+    }
+  }
+
+  Future<void> playSong(
+    Song song, {
+    required String quality,
+    Duration? seekTo,
+  }) async {
     _isLoading = true;
     // 保留旧封面，切歌过渡期间用于锁屏/灵动岛显示
     final previousArtworkUrl = state.artworkUrl;
 
     // 是否是同一首歌（恢复播放）：保留 position/duration；切换新歌才清零
-    final isSameSong = state.currentSong?.id == song.id && state.currentSong?.source == song.source;
+    final isSameSong =
+        state.currentSong?.id == song.id &&
+        state.currentSong?.source == song.source;
     // 完整重置状态：直接构造新 PlayerState，避免 copyWith 的 nullable 遗留问题
     state = PlayerState(
       currentSong: song,
@@ -170,7 +265,10 @@ class PlayerController extends StateNotifier<PlayerState> {
       immediateArtworkUrl = '${AppConfig.baseUrl}/imgproxy?url=$encoded';
     } else if (song.picId.isNotEmpty) {
       // 直接构建代理 URL，与 fetchPicUrl 返回结果一致，避免网络请求延迟
-      final proxyUri = repository.buildPicProxyUrl(picId: song.picId, source: song.source);
+      final proxyUri = repository.buildPicProxyUrl(
+        picId: song.picId,
+        source: song.source,
+      );
       immediateArtworkUrl = proxyUri;
     }
     immediateArtworkUrl ??= previousArtworkUrl;
@@ -184,20 +282,35 @@ class PlayerController extends StateNotifier<PlayerState> {
 
     try {
       final String url;
+      String actualQuality = '';
+      int actualBitrate = 0;
+      bool isPreview = false;
       if (song.source == 'local') {
         // 本地文件直接用 file:// URI
-        url = song.urlId.startsWith('file://') ? song.urlId : 'file://${song.urlId}';
+        url =
+            song.urlId.startsWith('file://')
+                ? song.urlId
+                : 'file://${song.urlId}';
       } else if (song.source == 'jamendo' && song.urlId.startsWith('http')) {
         // Jamendo urlId 直接是 MP3 URL
         url = song.urlId;
       } else {
-        final rawUrl = await repository.fetchSongUrl(
+        // mid 是「档位标识」：酷狗换音质要换 hash，QQ 要 media_mid。
+        // 拿不到该档位时退到下一档，而不是让后端自己猜（那会多一次反查）。
+        final plan = _resolveStreamPlan(song, quality);
+        final info = await repository.fetchStream(
           songId: song.id,
           source: song.source,
-          quality: quality,
+          quality: plan.quality,
+          mediaId: plan.mediaId,
         );
-        // B站/YouTube 音频 URL 需要 Referer，通过后端代理播放
-        if ((song.source == 'bilibili' || song.source == 'youtube') && rawUrl.startsWith('http')) {
+        actualQuality = info.quality;
+        actualBitrate = info.bitrate;
+        isPreview = info.preview;
+        final rawUrl = info.url;
+        // 这些源的直链要么需要 Referer，要么只有 HTTP（酷狗 fsvippc），
+        // 都必须经后端代理播放，否则 iOS ATS 直接拦。
+        if (_needsProxy(song.source, rawUrl)) {
           url = '${AppConfig.baseUrl}/proxy?url=${Uri.encodeComponent(rawUrl)}';
         } else {
           url = rawUrl;
@@ -216,7 +329,13 @@ class PlayerController extends StateNotifier<PlayerState> {
       _isLoading = false;
       _isSwitching = false;
       nowPlayingHandler?.endSwitching();
-      state = state.copyWith(isPlaying: true, position: seekTo ?? state.position);
+      state = state.copyWith(
+        isPlaying: true,
+        position: seekTo ?? state.position,
+        actualQuality: actualQuality,
+        actualBitrate: actualBitrate,
+        isPreview: isPreview,
+      );
 
       // 立即更新锁屏/灵动岛，使用已知封面和 duration
       nowPlayingHandler?.setNowPlaying(
@@ -229,14 +348,17 @@ class PlayerController extends StateNotifier<PlayerState> {
       _updateDurationWhenReady(song, immediateArtworkUrl);
 
       // 并行加载歌词 + 封面 URL，互不阻塞
-      final lyricFuture = repository.fetchLyric(
-        songId: song.lyricId.isNotEmpty ? song.lyricId : song.id,
-        source: song.source,
-      ).then((raw) {
-        if (state.currentSong?.id == song.id) {
-          state = state.copyWith(lyrics: LyricParser.parse(raw));
-        }
-      }).catchError((_) {});
+      final lyricFuture = repository
+          .fetchLyric(
+            songId: song.lyricId.isNotEmpty ? song.lyricId : song.id,
+            source: song.source,
+          )
+          .then((raw) {
+            if (state.currentSong?.id == song.id) {
+              state = state.copyWith(lyrics: LyricParser.parse(raw));
+            }
+          })
+          .catchError((_) {});
 
       final artworkFuture = () async {
         try {
@@ -245,10 +367,17 @@ class PlayerController extends StateNotifier<PlayerState> {
             final encoded = Uri.encodeComponent(song.picUrl!);
             realArtworkUrl = '${AppConfig.baseUrl}/imgproxy?url=$encoded';
           } else if (song.picId.isNotEmpty) {
-            final fetched = await repository.fetchPicUrl(picId: song.picId, source: song.source);
+            final fetched = await repository.fetchPicUrl(
+              picId: song.picId,
+              source: song.source,
+            );
             if (fetched.isNotEmpty) {
-              if (fetched.startsWith('http') && (fetched.contains('.126.net') || fetched.contains('.163.com') || fetched.contains('.qq.com'))) {
-                realArtworkUrl = '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(fetched)}';
+              if (fetched.startsWith('http') &&
+                  (fetched.contains('.126.net') ||
+                      fetched.contains('.163.com') ||
+                      fetched.contains('.qq.com'))) {
+                realArtworkUrl =
+                    '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(fetched)}';
               } else {
                 realArtworkUrl = fetched;
               }
@@ -314,7 +443,10 @@ class PlayerController extends StateNotifier<PlayerState> {
       final encoded = Uri.encodeComponent(song.picUrl!);
       artworkUrl = '${AppConfig.baseUrl}/imgproxy?url=$encoded';
     } else if (song.picId.isNotEmpty) {
-      artworkUrl = repository.buildPicProxyUrl(picId: song.picId, source: song.source);
+      artworkUrl = repository.buildPicProxyUrl(
+        picId: song.picId,
+        source: song.source,
+      );
     }
     // 读取上次保存的播放进度
     final saved = await persistence.loadPlaybackPosition();
@@ -340,7 +472,7 @@ class PlayerController extends StateNotifier<PlayerState> {
     final wasPlaying = state.isPlaying;
     // 引擎未加载（恢复状态后第一次播放）：加载并跳到保存的进度
     if (!wasPlaying && state.currentSong != null && engine.duration == null) {
-      final quality = getQuality?.call() ?? '320';
+      final quality = getQuality?.call() ?? 'auto';
       final seekTo = _restoredPosition;
       _restoredPosition = null;
       await playSong(state.currentSong!, quality: quality, seekTo: seekTo);
@@ -365,7 +497,12 @@ class PlayerController extends StateNotifier<PlayerState> {
       await engine.pause();
       state = state.copyWith(isPlaying: false);
       // 保存当前进度和总时长，供下次启动恢复
-      persistence.savePlaybackPosition(position: state.position, duration: state.duration).ignore();
+      persistence
+          .savePlaybackPosition(
+            position: state.position,
+            duration: state.duration,
+          )
+          .ignore();
     }
   }
 
@@ -377,10 +514,14 @@ class PlayerController extends StateNotifier<PlayerState> {
   }
 
   /// 淡出后暂停（用于睡眠定时器到期）
-  Future<void> fadeOutAndPause({Duration fadeDuration = const Duration(seconds: 5)}) async {
+  Future<void> fadeOutAndPause({
+    Duration fadeDuration = const Duration(seconds: 5),
+  }) async {
     if (!state.isPlaying) return;
     final steps = 20;
-    final stepDuration = Duration(milliseconds: fadeDuration.inMilliseconds ~/ steps);
+    final stepDuration = Duration(
+      milliseconds: fadeDuration.inMilliseconds ~/ steps,
+    );
     for (int i = steps - 1; i >= 0; i--) {
       if (!state.isPlaying) break;
       await engine.setVolume(i / steps);
@@ -417,15 +558,21 @@ class PlayerController extends StateNotifier<PlayerState> {
     _precacheNextArtwork(queue, nextIndex, playMode);
   }
 
-  void _precacheNextArtwork(List<Song> queue, int currentIndex, PlayMode playMode) {
+  void _precacheNextArtwork(
+    List<Song> queue,
+    int currentIndex,
+    PlayMode playMode,
+  ) {
     if (queue.length <= 1) return;
-    final nextIndex = playMode == PlayMode.random
-        ? _random.nextInt(queue.length)
-        : (currentIndex + 1) % queue.length;
+    final nextIndex =
+        playMode == PlayMode.random
+            ? _random.nextInt(queue.length)
+            : (currentIndex + 1) % queue.length;
     final next = queue[nextIndex];
     String? url;
     if (next.picUrl != null && next.picUrl!.isNotEmpty) {
-      url = '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(next.picUrl!)}';
+      url =
+          '${AppConfig.baseUrl}/imgproxy?url=${Uri.encodeComponent(next.picUrl!)}';
     } else if (next.picId.isNotEmpty) {
       url = repository.buildPicProxyUrl(picId: next.picId, source: next.source);
     }
@@ -481,56 +628,58 @@ class PlayerController extends StateNotifier<PlayerState> {
   }
 }
 
-final audioEngineProvider = Provider<AudioEngine>((ref) => JustAudioEngine(sharedPlayer));
+final audioEngineProvider = Provider<AudioEngine>(
+  (ref) => JustAudioEngine(sharedPlayer),
+);
 
 final playerControllerProvider =
-    StateNotifierProvider<PlayerController, PlayerState>(
-      (ref) {
-        final controller = PlayerController(
-          repository: ref.watch(solaraRepositoryProvider),
-          engine: ref.watch(audioEngineProvider),
-          themeController: ref.read(themeControllerProvider.notifier),
-          onSongPlayed: (song) {
-            final historyNotifier = ref.read(historyStateProvider.notifier);
-            historyNotifier.addEntry(song);
-            ref
-                .read(persistentStateProvider)
-                .saveHistory(ref.read(historyStateProvider));
-          },
-          getQueue: () => ref.read(queueStateProvider).songs,
-          getPlayMode: () => ref.read(queueStateProvider).playMode,
-          getCurrentQueueIndex: () => ref.read(queueStateProvider).currentIndex,
-          setCurrentQueueIndex: (index) => ref.read(queueStateProvider.notifier).setCurrentIndex(index),
-          getQuality: () => ref.read(settingsStateProvider).playbackQuality,
-          persistence: ref.read(persistentStateProvider),
+    StateNotifierProvider<PlayerController, PlayerState>((ref) {
+      final controller = PlayerController(
+        repository: ref.watch(solaraRepositoryProvider),
+        engine: ref.watch(audioEngineProvider),
+        themeController: ref.read(themeControllerProvider.notifier),
+        onSongPlayed: (song) {
+          final historyNotifier = ref.read(historyStateProvider.notifier);
+          historyNotifier.addEntry(song);
+          ref
+              .read(persistentStateProvider)
+              .saveHistory(ref.read(historyStateProvider));
+        },
+        getQueue: () => ref.read(queueStateProvider).songs,
+        getPlayMode: () => ref.read(queueStateProvider).playMode,
+        getCurrentQueueIndex: () => ref.read(queueStateProvider).currentIndex,
+        setCurrentQueueIndex:
+            (index) =>
+                ref.read(queueStateProvider.notifier).setCurrentIndex(index),
+        getQuality: () => ref.read(settingsStateProvider).playbackQuality,
+        persistence: ref.read(persistentStateProvider),
+      );
+
+      // 注入锁屏/灵动岛/控制中心切歌回调
+      nowPlayingHandler?.onSkipNext = () async {
+        final q = ref.read(queueStateProvider);
+        final settings = ref.read(settingsStateProvider);
+        await controller.skipNext(
+          queue: q.songs,
+          currentIndex: q.currentIndex,
+          playMode: q.playMode,
+          quality: settings.playbackQuality,
         );
+      };
+      nowPlayingHandler?.onSkipPrevious = () async {
+        final q = ref.read(queueStateProvider);
+        final settings = ref.read(settingsStateProvider);
+        await controller.skipPrevious(
+          queue: q.songs,
+          currentIndex: q.currentIndex,
+          playMode: q.playMode,
+          quality: settings.playbackQuality,
+        );
+      };
 
-        // 注入锁屏/灵动岛/控制中心切歌回调
-        nowPlayingHandler?.onSkipNext = () async {
-          final q = ref.read(queueStateProvider);
-          final settings = ref.read(settingsStateProvider);
-          await controller.skipNext(
-            queue: q.songs,
-            currentIndex: q.currentIndex,
-            playMode: q.playMode,
-            quality: settings.playbackQuality,
-          );
-        };
-        nowPlayingHandler?.onSkipPrevious = () async {
-          final q = ref.read(queueStateProvider);
-          final settings = ref.read(settingsStateProvider);
-          await controller.skipPrevious(
-            queue: q.songs,
-            currentIndex: q.currentIndex,
-            playMode: q.playMode,
-            quality: settings.playbackQuality,
-          );
-        };
-
-        // 内部音量始终为1.0，跟随系统音量
-        return controller;
-      },
-    );
+      // 内部音量始终为1.0，跟随系统音量
+      return controller;
+    });
 
 /// 覆盖 sleepTimerProvider，让到期时淡出后暂停播放器
 final sleepTimerWithPlayerProvider =

@@ -3,7 +3,8 @@ import 'dart:async';
 class DebugLogBus {
   DebugLogBus._();
 
-  static final StreamController<String> _controller = StreamController<String>.broadcast();
+  static final StreamController<String> _controller =
+      StreamController<String>.broadcast();
 
   static Stream<String> get stream => _controller.stream;
 

@@ -7,15 +7,9 @@ class ThemeState {
   final Color seedColor;
   final String? artworkUrl;
 
-  const ThemeState({
-    required this.seedColor,
-    required this.artworkUrl,
-  });
+  const ThemeState({required this.seedColor, required this.artworkUrl});
 
-  ThemeState copyWith({
-    Color? seedColor,
-    String? artworkUrl,
-  }) {
+  ThemeState copyWith({Color? seedColor, String? artworkUrl}) {
     return ThemeState(
       seedColor: seedColor ?? this.seedColor,
       artworkUrl: artworkUrl ?? this.artworkUrl,
@@ -40,17 +34,23 @@ class ThemeController extends StateNotifier<ThemeState> {
 
   void _extractPaletteAsync(String url) {
     PaletteGenerator.fromImageProvider(
-      NetworkImage(proxyImageUrl(url)),
-      maximumColorCount: 12,
-    ).then((palette) {
-      // 如果 URL 已经切换到下一首歌，放弃旧结果
-      if (state.artworkUrl != url) return;
-      final color = palette.dominantColor?.color ?? palette.vibrantColor?.color ?? state.seedColor;
-      state = state.copyWith(seedColor: color);
-    }).catchError((_) {});
+          NetworkImage(proxyImageUrl(url)),
+          maximumColorCount: 12,
+        )
+        .then((palette) {
+          // 如果 URL 已经切换到下一首歌，放弃旧结果
+          if (state.artworkUrl != url) return;
+          final color =
+              palette.dominantColor?.color ??
+              palette.vibrantColor?.color ??
+              state.seedColor;
+          state = state.copyWith(seedColor: color);
+        })
+        .catchError((_) {});
   }
 }
 
-final themeControllerProvider = StateNotifierProvider<ThemeController, ThemeState>(
-  (ref) => ThemeController(),
-);
+final themeControllerProvider =
+    StateNotifierProvider<ThemeController, ThemeState>(
+      (ref) => ThemeController(),
+    );

@@ -6,9 +6,8 @@ class RemoteQueueState {
 
   factory RemoteQueueState.fromJson(Map<String, dynamic> json) {
     final rawSongs = (json['songs'] as List<dynamic>? ?? const []);
-    final songs = rawSongs
-        .map((item) => Map<String, dynamic>.from(item as Map))
-        .toList();
+    final songs =
+        rawSongs.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteQueueState(
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       songs: songs,
@@ -16,10 +15,7 @@ class RemoteQueueState {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'updatedAt': updatedAt.toIso8601String(),
-      'songs': songs,
-    };
+    return {'updatedAt': updatedAt.toIso8601String(), 'songs': songs};
   }
 }
 
@@ -31,9 +27,8 @@ class RemoteFavoritesState {
 
   factory RemoteFavoritesState.fromJson(Map<String, dynamic> json) {
     final rawSongs = (json['songs'] as List<dynamic>? ?? const []);
-    final songs = rawSongs
-        .map((item) => Map<String, dynamic>.from(item as Map))
-        .toList();
+    final songs =
+        rawSongs.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteFavoritesState(
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       songs: songs,
@@ -41,10 +36,7 @@ class RemoteFavoritesState {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'updatedAt': updatedAt.toIso8601String(),
-      'songs': songs,
-    };
+    return {'updatedAt': updatedAt.toIso8601String(), 'songs': songs};
   }
 }
 
@@ -62,10 +54,7 @@ class RemoteSettingsState {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'updatedAt': updatedAt.toIso8601String(),
-      'data': data,
-    };
+    return {'updatedAt': updatedAt.toIso8601String(), 'data': data};
   }
 }
 
@@ -77,9 +66,8 @@ class RemoteLocalSongsState {
 
   factory RemoteLocalSongsState.fromJson(Map<String, dynamic> json) {
     final rawSongs = (json['songs'] as List<dynamic>? ?? const []);
-    final songs = rawSongs
-        .map((item) => Map<String, dynamic>.from(item as Map))
-        .toList();
+    final songs =
+        rawSongs.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     return RemoteLocalSongsState(
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       songs: songs,
@@ -87,10 +75,7 @@ class RemoteLocalSongsState {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'updatedAt': updatedAt.toIso8601String(),
-      'songs': songs,
-    };
+    return {'updatedAt': updatedAt.toIso8601String(), 'songs': songs};
   }
 }
 
@@ -115,24 +100,30 @@ class RemoteStateSnapshot {
     return RemoteStateSnapshot(
       version: (json['version'] as num?)?.toInt() ?? 1,
       updatedAt: DateTime.parse(json['updatedAt'] as String),
-      queue: json['queue'] == null
-          ? null
-          : RemoteQueueState.fromJson(Map<String, dynamic>.from(json['queue'] as Map)),
-      favorites: json['favorites'] == null
-          ? null
-          : RemoteFavoritesState.fromJson(
-              Map<String, dynamic>.from(json['favorites'] as Map),
-            ),
-      settings: json['settings'] == null
-          ? null
-          : RemoteSettingsState.fromJson(
-              Map<String, dynamic>.from(json['settings'] as Map),
-            ),
-      localSongs: json['localSongs'] == null
-          ? null
-          : RemoteLocalSongsState.fromJson(
-              Map<String, dynamic>.from(json['localSongs'] as Map),
-            ),
+      queue:
+          json['queue'] == null
+              ? null
+              : RemoteQueueState.fromJson(
+                Map<String, dynamic>.from(json['queue'] as Map),
+              ),
+      favorites:
+          json['favorites'] == null
+              ? null
+              : RemoteFavoritesState.fromJson(
+                Map<String, dynamic>.from(json['favorites'] as Map),
+              ),
+      settings:
+          json['settings'] == null
+              ? null
+              : RemoteSettingsState.fromJson(
+                Map<String, dynamic>.from(json['settings'] as Map),
+              ),
+      localSongs:
+          json['localSongs'] == null
+              ? null
+              : RemoteLocalSongsState.fromJson(
+                Map<String, dynamic>.from(json['localSongs'] as Map),
+              ),
     );
   }
 

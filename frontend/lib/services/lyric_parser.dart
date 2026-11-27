@@ -1,7 +1,9 @@
 import '../domain/models/lyric_line.dart';
 
 class LyricParser {
-  static final RegExp _lineExp = RegExp(r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\](.*)");
+  static final RegExp _lineExp = RegExp(
+    r"\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\](.*)",
+  );
 
   static List<LyricLine> parse(String raw) {
     final lines = <LyricLine>[];

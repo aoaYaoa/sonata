@@ -29,12 +29,13 @@ class PersistentStateService {
     notifier.addSongs(songs);
     final index = await storage.getJson<int>('queueCurrentIndex') ?? 0;
     final playModeStr = await storage.getJson<String>('queuePlayMode');
-    final playMode = playModeStr != null
-        ? PlayMode.values.firstWhere(
-            (m) => m.name == playModeStr,
-            orElse: () => PlayMode.list,
-          )
-        : PlayMode.list;
+    final playMode =
+        playModeStr != null
+            ? PlayMode.values.firstWhere(
+              (m) => m.name == playModeStr,
+              orElse: () => PlayMode.list,
+            )
+            : PlayMode.list;
     notifier.loadState(currentIndex: index, playMode: playMode);
   }
 
@@ -140,14 +141,18 @@ class PersistentStateService {
     notifier.loadEntries(entries);
   }
 
-  Future<void> savePlaybackPosition({required Duration position, Duration? duration}) async {
+  Future<void> savePlaybackPosition({
+    required Duration position,
+    Duration? duration,
+  }) async {
     await storage.setJson('lastPlaybackPosition', position.inMilliseconds);
     if (duration != null) {
       await storage.setJson('lastPlaybackDuration', duration.inMilliseconds);
     }
   }
 
-  Future<({Duration position, Duration? duration})> loadPlaybackPosition() async {
+  Future<({Duration position, Duration? duration})>
+  loadPlaybackPosition() async {
     final posMs = await storage.getJson<int>('lastPlaybackPosition');
     final durMs = await storage.getJson<int>('lastPlaybackDuration');
     return (
@@ -200,7 +205,10 @@ class PersistentStateService {
 
   Future<void> saveLocalSongs(List<Song> songs) async {
     await storage.setJson('localSongs', songs.map((s) => s.toJson()).toList());
-    await storage.setJson('localSongsUpdatedAt', DateTime.now().toUtc().toIso8601String());
+    await storage.setJson(
+      'localSongsUpdatedAt',
+      DateTime.now().toUtc().toIso8601String(),
+    );
     syncController?.scheduleSync();
   }
 }

@@ -11,12 +11,12 @@ class EqPreset {
 
 class EqService {
   static const List<EqPreset> presets = [
-    EqPreset(id: 'flat',    label: '默认',   gains: [0, 0, 0, 0, 0]),
-    EqPreset(id: 'pop',     label: '流行',   gains: [2, 1, -1, 1, 2]),
-    EqPreset(id: 'rock',    label: '摇滚',   gains: [4, 1, -2, 1, 4]),
-    EqPreset(id: 'vocal',   label: '人声',   gains: [-2, 2, 4, 2, -2]),
-    EqPreset(id: 'bass',    label: '低音增强', gains: [6, 4, 0, -1, -2]),
-    EqPreset(id: 'soft',    label: '轻音乐',  gains: [-1, 2, 3, 2, 1]),
+    EqPreset(id: 'flat', label: '默认', gains: [0, 0, 0, 0, 0]),
+    EqPreset(id: 'pop', label: '流行', gains: [2, 1, -1, 1, 2]),
+    EqPreset(id: 'rock', label: '摇滚', gains: [4, 1, -2, 1, 4]),
+    EqPreset(id: 'vocal', label: '人声', gains: [-2, 2, 4, 2, -2]),
+    EqPreset(id: 'bass', label: '低音增强', gains: [6, 4, 0, -1, -2]),
+    EqPreset(id: 'soft', label: '轻音乐', gains: [-1, 2, 3, 2, 1]),
   ];
 
   static EqPreset? findById(String id) {

@@ -1,12 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../app/theme.dart';
+import '../../data/providers.dart';
 import '../../domain/models/discover.dart';
+import '../../domain/models/music_source.dart';
 import '../../domain/state/settings_state.dart';
 import '../../services/app_config.dart';
-import '../../services/image_headers.dart' show proxyImageUrl;
-import '../../data/providers.dart';
+import '../../services/debug_log_bus.dart';
+import '../widgets/playlist_cover.dart';
+import '../widgets/solara_ui.dart';
+import '../widgets/source_picker.dart';
 import 'song_list_detail_screen.dart';
 
+/// 发现页：所选音源的推荐歌单瀑布流。
+///
+/// 版式：顶部一个大标题 + 音源胶囊，往下是三列方形封面网格（手机竖屏）。
+/// 卡片形态对齐网易云/QQ 音乐的「封面 + 下方两行字」，而不是把文字压在图的
+/// 下半部分——压字会让封面主体被遮掉一半，看起来更像宣传图而不是曲库。
 class DiscoverScreen extends ConsumerStatefulWidget {
   const DiscoverScreen({super.key});
 
@@ -23,6 +34,16 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   bool _hasMore = true;
   int _page = 1;
   String? _error;
+  String? _loadMoreError;
+
+  /// 曲风筛选，空串表示「全部」。
+  ///
+  /// 后端 `/api/discover/songlist` 早就支持 `tag` 参数（走网易云的
+  /// `playlist/list?cat=`），前端一直没接——`AppConfig.genres` 里的
+  /// 13 个曲风全项目零引用。只有网易云有这个分类维度，其它音源不显示。
+  String _tag = '';
+
+  bool get _supportsGenre => _currentSource == 'netease';
 
   @override
   void initState() {
@@ -45,9 +66,19 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     super.dispose();
   }
 
+  /// 请求序号：切音源/切曲风时，晚回来的旧请求直接丢弃。
+  ///
+  /// 否则连点两个曲风时，前一个的响应会覆盖后一个的结果——
+  /// 标题写着「摇滚」，列表却是「流行」的数据。
+  int _requestId = 0;
+
   Future<void> _loadSource(String source) async {
     if (!mounted) return;
+    final requestId = ++_requestId;
     setState(() {
+      // 换到没有曲风维度的音源时把筛选清掉：否则标题还挂着上一个音源
+      // 的中文曲风（「电子 · 酷狗推荐」），而那其实是无效条件。
+      if (source != 'netease') _tag = '';
       _currentSource = source;
       _songLists = [];
       _page = 1;
@@ -58,15 +89,20 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     });
     try {
       final repo = ref.read(solaraRepositoryProvider);
-      final items = await repo.fetchSongList(source: source, page: 1);
-      if (!mounted || _currentSource != source) return;
+      final items = await repo.fetchSongList(
+        source: source,
+        tag: _tag,
+        page: 1,
+      );
+      if (!mounted || requestId != _requestId) return;
       setState(() {
         _songLists = items;
         _loading = false;
         _hasMore = items.length >= 30;
+        _loadMoreError = null;
       });
     } catch (e) {
-      if (!mounted || _currentSource != source) return;
+      if (!mounted || requestId != _requestId) return;
       setState(() {
         _loading = false;
         _error = '加载失败: $e';
@@ -81,7 +117,11 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     try {
       final repo = ref.read(solaraRepositoryProvider);
       final nextPage = _page + 1;
-      final items = await repo.fetchSongList(source: source, page: nextPage);
+      final items = await repo.fetchSongList(
+        source: source,
+        tag: _tag,
+        page: nextPage,
+      );
       if (!mounted || _currentSource != source) return;
       setState(() {
         _songLists = [..._songLists, ...items];
@@ -91,82 +131,35 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _loadingMore = false);
+      // 原来这里是 catch (_) 静默吞掉：滚到底没反应也没提示，
+      // 用户只能反复往下拉。现在记下错误，底部那颗「加载失败，点击重试」能点。
+      setState(() {
+        _loadingMore = false;
+        _loadMoreError = '加载更多失败';
+      });
+      DebugLogBus.add('[Discover] loadMore 失败: $e');
     }
+  }
+
+  Future<void> _retryLoadMore() async {
+    setState(() => _loadMoreError = null);
+    await _loadMore();
+  }
+
+  Future<void> _selectTag(String tag) async {
+    if (tag == _tag) return;
+    setState(() => _tag = tag);
+    await _loadSource(_currentSource);
   }
 
   void _onScroll() {
     if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
+        _scrollController.position.maxScrollExtent - 240) {
       _loadMore();
     }
   }
 
-  void _showSourceSheet(BuildContext context, String current, ColorScheme colorScheme,
-      ValueChanged<String> onSelected) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('选择音源',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700,
-                        color: colorScheme.onSurface)),
-              ),
-            ),
-            ...AppConfig.sources.map((s) {
-              final isSelected = s == current;
-              return ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-                title: Text(_sourceLabel(s),
-                    style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                      color: isSelected ? colorScheme.primary : colorScheme.onSurface,
-                    )),
-                trailing: isSelected
-                    ? Icon(Icons.check_rounded, color: colorScheme.primary)
-                    : null,
-                onTap: () {
-                  Navigator.pop(context);
-                  onSelected(s);
-                },
-              );
-            }),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _sourceLabel(String source) {
-    switch (source) {
-      case 'netease':  return '网易';
-      case 'tencent':  return 'QQ';
-      case 'kugou':    return '酷狗';
-      case 'kuwo':     return '酷我';
-      case 'youtube':  return 'YouTube';
-      case 'bilibili': return 'B站';
-      case 'jamendo':  return 'Jamendo';
-      default: return source;
-    }
-  }
+  String _sourceLabel(String source) => MusicSource.shortLabel(source);
 
   @override
   Widget build(BuildContext context) {
@@ -177,93 +170,135 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
     });
 
     final settings = ref.watch(settingsStateProvider);
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final scheme = Theme.of(context).colorScheme;
     final source = settings.discoverSource;
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor: scheme.surface,
       body: RefreshIndicator(
+        color: scheme.primary,
         onRefresh: () => _loadSource(source),
         child: CustomScrollView(
           controller: _scrollController,
           slivers: [
             SliverAppBar(
               pinned: true,
-              floating: false,
-              toolbarHeight: 56,
-              backgroundColor: colorScheme.surface,
+              toolbarHeight: 64,
+              backgroundColor: scheme.surface,
               surfaceTintColor: Colors.transparent,
-              centerTitle: false,
-              title: const Text('发现', style: TextStyle(fontWeight: FontWeight.w700)),
+              title: const Text('发现'),
               actions: [
                 Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: GestureDetector(
-                    onTap: () => _showSourceSheet(
-                      context, source, colorScheme,
-                      (value) => ref.read(settingsStateProvider.notifier).setDiscoverSource(value),
-                    ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isDark
-                            ? Colors.white.withValues(alpha: 0.08)
-                            : Colors.black.withValues(alpha: 0.06),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(_sourceLabel(source), style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w500,
-                            color: colorScheme.onSurface)),
-                          const SizedBox(width: 2),
-                          Icon(Icons.keyboard_arrow_down_rounded, size: 16,
-                              color: colorScheme.onSurfaceVariant),
-                        ],
-                      ),
-                    ),
+                  padding: const EdgeInsets.only(right: 16),
+                  child: SourcePill(
+                    label: _sourceLabel(source),
+                    onTap:
+                        () => showSourceSheet(
+                          context,
+                          current: source,
+                          onSelected:
+                              (value) => ref
+                                  .read(settingsStateProvider.notifier)
+                                  .setDiscoverSource(value),
+                        ),
                   ),
                 ),
               ],
             ),
             SliverToBoxAdapter(
-              child: _SectionTitle(title: '精选歌单', icon: Icons.queue_music_rounded),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                child: Text(
+                  _tag.isEmpty
+                      ? '${_sourceLabel(source)}的推荐歌单'
+                      : '$_tag · ${_sourceLabel(source)}推荐',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.6,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
             ),
+            if (_supportsGenre)
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    children: [
+                      for (final tag in ['全部', ...AppConfig.genres])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _GenreChip(
+                            label: tag,
+                            selected: tag == '全部' ? _tag.isEmpty : tag == _tag,
+                            // 「全部」用空串表示：后端 tag 为空时走 cat=全部，
+                            // 传「全部」两个字反而不对。
+                            onTap: () => _selectTag(tag == '全部' ? '' : tag),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 14)),
             if (_error != null)
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: Text(_error!, style: TextStyle(color: colorScheme.error, fontSize: 13)),
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _error!,
+                          style: TextStyle(color: scheme.error, fontSize: 12.5),
+                        ),
+                      ),
+                      // 失败时给一个明确的「重试」：原来只有一行红字，
+                      // 想再试一次只能下拉刷新，而错误状态下没人会想到下拉。
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        icon: const Icon(Icons.refresh_rounded, size: 16),
+                        label: const Text('重试'),
+                        onPressed: () => _loadSource(source),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             if (_loading)
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
+              const SliverFillRemaining(
+                child: Center(child: CircularProgressIndicator()),
               )
             else if (_songLists.isEmpty)
-              const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(child: Text('暂无歌单数据')),
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: EmptyState(
+                  icon: Icons.queue_music_rounded,
+                  title: '这个音源暂时没有歌单',
+                  hint: '右上角换个音源试试',
                 ),
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 sliver: SliverGrid(
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    childAspectRatio: 1.4,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
+                    crossAxisCount: 3,
+                    childAspectRatio: 0.68,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 16,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     (context, index) => _SongListCard(
+                      // 同上：换曲风/音源时按歌单 id 定位，不复用旧格子。
+                      key: ValueKey(_songLists[index].id),
                       item: _songLists[index],
                       source: source,
                       index: index,
@@ -275,14 +310,30 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
             if (_loadingMore)
               const SliverToBoxAdapter(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: EdgeInsets.all(20),
                   child: Center(
-                    child: SizedBox(width: 24, height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+              )
+            else if (_loadMoreError != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+                  child: Center(
+                    child: TextButton.icon(
+                      onPressed: _retryLoadMore,
+                      icon: const Icon(Icons.refresh_rounded, size: 16),
+                      label: Text('$_loadMoreError，点击重试'),
+                    ),
                   ),
                 ),
               ),
-            const SliverToBoxAdapter(child: SizedBox(height: 16)),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
         ),
       ),
@@ -290,158 +341,127 @@ class _DiscoverScreenState extends ConsumerState<DiscoverScreen> {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  const _SectionTitle({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-      child: Row(
-        children: [
-          Container(
-            width: 4, height: 18,
-            decoration: BoxDecoration(
-              color: colorScheme.primary,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(title,
-              style: Theme.of(context).textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-}
-
+/// 歌单卡：方形封面 + 下方两行文字。
 class _SongListCard extends StatelessWidget {
   final SongListItem item;
   final String source;
   final int index;
-  const _SongListCard({required this.item, required this.source, required this.index});
+  const _SongListCard({
+    super.key,
+    required this.item,
+    required this.source,
+    required this.index,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final scheme = Theme.of(context).colorScheme;
+    final cover = item.coverUrl ?? '';
+
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => SongListDetailScreen(item: item, source: source)),
-      ),
-      child: Card(
-        elevation: 2,
-        shadowColor: colorScheme.shadow.withValues(alpha: 0.25),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // 背景：网易用封面图，其他用渐变
-            source == 'netease' && item.coverUrl != null
-                ? Image.network(
-                    proxyImageUrl(item.coverUrl!),
-                    fit: BoxFit.cover,
-                    cacheWidth: 300,
-                    gaplessPlayback: true,
-                    errorBuilder: (_, __, ___) => _gradient(context),
-                  )
-                : _gradient(context),
-            // 底部文字遮罩
-            Positioned(
-              left: 0, right: 0, bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(10, 28, 10, 10),
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Color(0xA6000000)],
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      item.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600),
-                    ),
-                    if (item.author.isNotEmpty)
-                      Text(
-                        item.author,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 11),
+      onTap:
+          () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => SongListDetailScreen(item: item, source: source),
+            ),
+          ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: ClipRRect(
+              borderRadius: SolaraRadius.tileRadius,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 网易云的歌单封面是「海报式设计图」，上面写着歌单名。
+                  // 直接铺上去用户看到的还是一行字，所以同样先补专辑拼图。
+                  PlaylistCover(id: item.id, source: source, brandUrl: cover),
+                  // 播放量角标
+                  if ((item.playCount ?? '').isNotEmpty)
+                    Positioned(
+                      right: 6,
+                      top: 6,
+                      child: MiniTag(
+                        text: _formatCount(item.playCount!),
+                        icon: Icons.play_arrow_rounded,
                       ),
-                  ],
-                ),
+                    ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _gradient(BuildContext context) {
-    final style = _cardStyles[index % _cardStyles.length];
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: style.gradientBegin,
-          end: style.gradientEnd,
-          colors: style.colors,
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(right: -16, top: -16,
-              child: Container(width: 80, height: 80,
-                  decoration: BoxDecoration(shape: BoxShape.circle,
-                      color: Colors.white.withValues(alpha: 0.10)))),
-          Positioned(left: -10, bottom: 24,
-              child: Container(width: 50, height: 50,
-                  decoration: BoxDecoration(shape: BoxShape.circle,
-                      color: Colors.white.withValues(alpha: 0.07)))),
-          Center(child: Icon(style.icon, size: 40,
-              color: Colors.white.withValues(alpha: 0.9))),
+          ),
+          const SizedBox(height: 7),
+          Text(
+            item.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.3,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurface,
+            ),
+          ),
         ],
       ),
     );
   }
+
+  static String _formatCount(String raw) {
+    final n = int.tryParse(raw);
+    if (n == null) return raw;
+    if (n >= 100000000) return '${(n / 100000000).toStringAsFixed(1)}亿';
+    if (n >= 10000) return '${(n / 10000).toStringAsFixed(1)}万';
+    return '$n';
+  }
 }
 
-class _CardStyle {
-  final List<Color> colors;
-  final AlignmentGeometry gradientBegin;
-  final AlignmentGeometry gradientEnd;
-  final IconData icon;
-  const _CardStyle({required this.colors, required this.gradientBegin,
-      required this.gradientEnd, required this.icon});
-}
+/// 曲风胶囊。和音源胶囊的区别：这是「多选一」的筛选态，
+/// 用填充色而不是下拉箭头，选中时一眼能认出来。
+class _GenreChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
 
-const _cardStyles = [
-  _CardStyle(colors: [Color(0xFFFF6B6B), Color(0xFFFF8E53)], gradientBegin: Alignment.topLeft, gradientEnd: Alignment.bottomRight, icon: Icons.whatshot_rounded),
-  _CardStyle(colors: [Color(0xFF4776E6), Color(0xFF8E54E9)], gradientBegin: Alignment.topRight, gradientEnd: Alignment.bottomLeft, icon: Icons.star_rounded),
-  _CardStyle(colors: [Color(0xFF11998E), Color(0xFF38EF7D)], gradientBegin: Alignment.topLeft, gradientEnd: Alignment.bottomRight, icon: Icons.music_note_rounded),
-  _CardStyle(colors: [Color(0xFFFC5C7D), Color(0xFF6A3093)], gradientBegin: Alignment.topCenter, gradientEnd: Alignment.bottomCenter, icon: Icons.favorite_rounded),
-  _CardStyle(colors: [Color(0xFFF7971E), Color(0xFFFFD200)], gradientBegin: Alignment.topLeft, gradientEnd: Alignment.bottomRight, icon: Icons.emoji_events_rounded),
-  _CardStyle(colors: [Color(0xFF1FA2FF), Color(0xFF12D8FA)], gradientBegin: Alignment.topRight, gradientEnd: Alignment.bottomLeft, icon: Icons.headphones_rounded),
-  _CardStyle(colors: [Color(0xFF834D9B), Color(0xFFD04ED6)], gradientBegin: Alignment.topLeft, gradientEnd: Alignment.bottomRight, icon: Icons.queue_music_rounded),
-  _CardStyle(colors: [Color(0xFF56AB2F), Color(0xFFA8E063)], gradientBegin: Alignment.topCenter, gradientEnd: Alignment.bottomCenter, icon: Icons.album_rounded),
-  _CardStyle(colors: [Color(0xFFFF512F), Color(0xFFDD2476)], gradientBegin: Alignment.topLeft, gradientEnd: Alignment.bottomRight, icon: Icons.bar_chart_rounded),
-  _CardStyle(colors: [Color(0xFF2193B0), Color(0xFF6DD5ED)], gradientBegin: Alignment.topRight, gradientEnd: Alignment.bottomLeft, icon: Icons.trending_up_rounded),
-];
+  const _GenreChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? scheme.primary.withValues(alpha: 0.16)
+                  : scheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color:
+                selected
+                    ? scheme.primary.withValues(alpha: 0.5)
+                    : Colors.transparent,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected ? scheme.primary : scheme.onSurface,
+          ),
+        ),
+      ),
+    );
+  }
+}
